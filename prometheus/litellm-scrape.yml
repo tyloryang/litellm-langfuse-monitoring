@@ -1,12 +1,11 @@
-# Append this entry to existing scrape_configs.
-- job_name: litellm-gateway
+# Append under existing scrape_configs; do not overwrite existing jobs.
+# LiteLLM metrics authentication differs by version: configure bearer_token_file
+# only when the /metrics endpoint requires it. Keep token outside Git.
+- job_name: litellm
   scrape_interval: 15s
   metrics_path: /metrics
-  authorization:
-    type: Bearer
-    credentials_file: /etc/prometheus/secrets/litellm_master_key
+  # bearer_token_file: /etc/prometheus/secrets/litellm-metrics-token
   static_configs:
-    - targets: ['192.168.10.10:4000']
+    - targets: ["192.168.10.10:9401"]
       labels:
         service: litellm
-        environment: production
