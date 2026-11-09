@@ -1,0 +1,433 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "LiteLLM Target",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"litellm\"}",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Gateway QPS",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(litellm_proxy_total_requests_metric_total[5m]))",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 3,
+      "title": "Gateway Error Rate %",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(rate(litellm_proxy_failed_requests_metric_total[5m])) / clamp_min(sum(rate(litellm_proxy_total_requests_metric_total[5m])),0.001)",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 4,
+      "title": "In-flight Requests",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(litellm_in_flight_requests)",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 5,
+      "title": "Input Tokens / sec by Model",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (requested_model) (rate(litellm_input_tokens_metric_total[5m]))",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 6,
+      "title": "Output Tokens / sec by Model",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (requested_model) (rate(litellm_output_tokens_metric_total[5m]))",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 7,
+      "title": "Spend / 24h by Model",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (requested_model) (increase(litellm_spend_metric_total[24h]))",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 8,
+      "title": "Requests / 24h by Client IP",
+      "type": "table",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(20,sum by (client_ip) (increase(litellm_proxy_total_requests_metric_total[24h])))",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": true
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 9,
+      "title": "vLLM TTFT P95 (seconds)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95,sum by (le,instance) (rate({__name__=\"vllm:time_to_first_token_seconds_bucket\"}[5m])))",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 10,
+      "title": "vLLM TPOT P95 (seconds)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95,sum by (le,instance) (rate({__name__=\"vllm:request_time_per_output_token_seconds_bucket\"}[5m])))",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 11,
+      "title": "vLLM KV Cache %",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{__name__=\"vllm:kv_cache_usage_perc\"} * 100",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 12,
+      "title": "vLLM Running Requests",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{__name__=\"vllm:num_requests_running\"}",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 13,
+      "title": "GPU Utilization %",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "DCGM_FI_DEV_GPU_UTIL",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 14,
+      "title": "GPU Memory Used (MiB)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "DCGM_FI_DEV_FB_USED",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 15,
+      "title": "GPU Temperature (C)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "DCGM_FI_DEV_GPU_TEMP",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    },
+    {
+      "id": 16,
+      "title": "GPU Power (W)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "DCGM_FI_DEV_POWER_USAGE",
+          "legendFormat": "{{requested_model}} {{instance}} {{client_ip}}",
+          "instant": false
+        }
+      ],
+      "options": {}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "litellm",
+    "llm",
+    "gpu",
+    "langfuse"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "Prometheus"
+        }
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "LiteLLM Gateway and GPU Inference Overview",
+  "uid": "litellm-gpu-overview",
+  "version": 1
+}
