@@ -25,6 +25,7 @@ WSL 运行目录 /home/YOUR_USER/litellm-langfuse-monitoring
   ├── .env                         既有密钥与 OTEL / 离线价格表开关
   ├── litellm/config.local.yaml     保留既有路由，只调整观测回调
   ├── litellm/observability_callback.py
+  ├── data/source-usage/usage.sqlite3   按来源 IP / 模型持久累计 Token
   ├── exporters/{strata_extra.py,run-local.sh}
   └── backups/observability-*/manifest.json
 
@@ -53,11 +54,13 @@ wsl -d Ubuntu-24.04 -- env LITELLM_LOCAL_MODEL_COST_MAP=True /home/YOUR_USER/llm
 wsl -d Ubuntu-24.04 -- env LITELLM_LOCAL_MODEL_COST_MAP=True /home/YOUR_USER/llm-observability/.venv/bin/python /mnt/e/project/YOUR_PROJECT/litellm-langfuse-monitoring/ops/deploy_wsl.py
 ```
 
-脚本依次备份被覆盖的文件、验证 LiteLLM 自定义文件加载、保留其他回调和模型路由、关闭全局 OTEL V2 并启用内置价格表、合并 Strata 抓取与规则、更新看板。先执行 `promtool check config`，再启动补充导出器、重启网关并检查存活，最后对 Prometheus 发送 HUP。Grafana provider 自动读取更新。
+脚本依次备份被覆盖的文件、验证 LiteLLM 自定义文件加载、保留其他回调和模型路由、关闭全局 OTEL V2 并启用内置价格表、合并 Strata 抓取与规则、更新看板。自动发现现有 Nginx 地址并写入来源代理信任配置，设置 SQLite 路径，保持 `use_x_forwarded_for=false` / `FORWARDED_ALLOW_IPS=''`。已有来源账本通过 SQLite backup API 备份。先执行 `promtool check config`，再启动补充导出器、重启网关并检查存活，最后对 Prometheus 发送 HUP。Grafana provider 自动读取更新。
+
+复用的宿主 LiteLLM 原本不使用数据库；启动脚本在加载运行 `.env` 后取消 DATABASE_URL / DIRECT_URL / 只读副本地址，并设置 `LITELLM_MODE=PRODUCTION` / `PYTHON_DOTENV_DISABLED=1`，避免 DEV loader 再读取共享 `.env` 的 Langfuse 容器数据库地址而触发错误迁移。此行为针对本机既有无数据库网关，不适用于需要 LiteLLM 数据库的其他部署。
 
 Prometheus 主配置是单文件 bind mount，脚本原位写入以保留 inode。Strata 认证文件由宿主用户持有、组为 Prometheus 的 65534，权限 0640；使用缓存的现有 Prometheus 镜像执行一次无网络权限修正。运行需要既有 Docker 访问权限。
 
-可通过 `--runtime-root`、`--prometheus`、`--grafana` 调整目录和容器名。端口 8080 / 9402、共享 venv、systemd 单元名和 deployment 标签按本机布局设置，跨机器迁移时应检查脚本。
+可通过 `--runtime-root`、`--prometheus`、`--grafana`、`--nginx` 调整目录和容器名。端口 8080 / 9402、共享 venv、systemd 单元名和 deployment 标签按本机布局设置，跨机器迁移时应检查脚本。
 
 ## 客户端接入
 
@@ -81,6 +84,8 @@ OpenAI 兼容入口是 `http://localhost:4000/v1`，模型为 `qwen-strata`，�
 
 也可通过 `x-session-id` / `x-litellm-session-id`、`langfuse_trace_user_id`、`langfuse_trace_name` 传递信息。OpenAI 请求的 `user` 可作为用户标识。回调只选取需要的 metadata，不把内部凭证或完整请求头写入 Span。
 
+来源 IP 由连接与可信代理头推导，客户端不需要提交 `metadata.source_ip`，提交也不会用于归属。Grafana 第 07 分区按 IP 统计用量，Langfuse GENERATION Metadata 显示 `source_ip`。Nginx 重建导致容器 IP 变化后重新运行部署脚本更新可信地址；经过 NAT 时只能看到入口实际可见地址。完整公式、历史限制与持久化说明见 [来源 IP 与 Token 用量](source-ip-usage.md)。
+
 客户端执行工具时，应用需要创建 AGENT / TOOL 观测，并把当前父节点传播给网关：
 
 ```text
@@ -103,7 +108,9 @@ wsl -d Ubuntu-24.04 -- bash /mnt/e/project/YOUR_PROJECT/litellm-langfuse-monitor
 wsl -d Ubuntu-24.04 -- bash /mnt/e/project/YOUR_PROJECT/litellm-langfuse-monitoring/ops/check.sh --exercise --trace-id a9880c8931c965de38f2bdcebca77c78
 ```
 
-脚本对 78 条面板查询执行真实 PromQL 检查，要求关键硬件与缓存有数值、必需目标健康。`--exercise` 核对 Langfuse 输入输出、usage 和 TTFT / TPOT；`--stream-trace-id` 复查既有流式记录。完整 JSON 在工作区 `.runtime/validation.json`，失败返回非零。
+脚本对 94 条面板查询执行真实 PromQL 检查，要求关键硬件与缓存有数值、必需目标健康。`--exercise` 核对 Langfuse 输入输出、usage 和 TTFT / TPOT；`--stream-trace-id` 复查既有流式记录。完整 JSON 在工作区 `.runtime/validation.json`，失败返回非零。
+
+来源校验可追加 `--source-trace-id 实际TraceID --expected-source-ip 入口可见IP`；等待至少两次抓取后，检查该 GENERATION 的来源、Prometheus 对应 IP / 模型累计值不小于该次 usage、持久化=1 / 写入错误=0。逐次精确差值与重启 / 备份恢复仍需按来源统计说明单独验收。
 
 回归测试：
 
@@ -150,3 +157,5 @@ docker kill --signal=HUP llm-observability-prometheus
 清单只记录覆盖前已存在的文件。恢复首次部署之前的状态时，额外执行 `systemctl --user disable --now strata-metrics-extra.service` 停止新增导出器。未覆盖的新文件可以留存，不会被恢复后的旧配置调用。
 
 自动健康检查失败时，脚本会恢复旧 LiteLLM YAML 并重启网关；这只是配置恢复，不是全量事务回滚。恢复回调代码、`.env`、规则和看板需使用完整备份。备份含运行密钥，应留在 WSL 私有目录。
+
+来源账本的 `source-usage.sqlite3` 一致性备份独立存放在同次备份目录，不在文件清单自动覆盖范围。按 [SQLite 恢复步骤](source-ip-usage.md#配置持久化与离线部署) 停止网关后恢复；回滚代码和看板时保留当前账本即可，不需要删除数据。

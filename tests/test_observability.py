@@ -3,7 +3,9 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -51,7 +53,7 @@ class StreamSemantics(unittest.TestCase):
 
 class TraceIntegration(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.logger = gateway.GatewayObservability()
+        self.logger = gateway.GatewayObservability(source_usage=gateway.SourceUsageCollector(":memory:"))
         self.exporter = InMemorySpanExporter()
         self.provider = TracerProvider()
         self.provider.add_span_processor(SimpleSpanProcessor(self.exporter))
@@ -84,6 +86,27 @@ class TraceIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIn("add_numbers", span.attributes["langfuse.observation.output"])
         self.assertNotIn("sk-must-not-export", json.dumps(dict(span.attributes)))
         self.assertFalse(self.logger.states)
+
+    async def test_verified_source_survives_export_and_usage_counts_once(self):
+        data = {"model": "source-model", "litellm_call_id": "source-request",
+                "metadata": {"requester_ip_address": "172.18.0.10", "source_ip": "192.0.2.99"},
+                "proxy_server_request": {"headers": {"X-Forwarded-For": "198.51.100.7", "Authorization": "Bearer private"}}}
+        with patch.dict("os.environ", {"GATEWAY_TRUSTED_PROXY_CIDRS": "172.18.0.10/32"}):
+            await self.logger.async_pre_call_hook(None, None, data, "completion")
+        response = {"choices": [{"message": {"content": "42"}}], "usage": {"prompt_tokens": 30, "completion_tokens": 20,
+                    "prompt_tokens_details": {"cached_tokens": 5}, "completion_tokens_details": {"reasoning_tokens": 12}}}
+        await self.logger.async_log_success_event(data, response, None, None)
+        await self.logger.async_log_success_event(data, response, None, None)
+        span = self.exporter.get_finished_spans()[0]
+        metadata = json.loads(span.attributes["langfuse.observation.metadata"])
+        self.assertEqual(metadata["source_ip"], "198.51.100.7")
+        self.assertEqual(metadata["network_peer_ip"], "172.18.0.10")
+        self.assertEqual(json.loads(span.attributes["langfuse.trace.metadata"])["source_ip"], "198.51.100.7")
+        self.assertNotIn("Bearer private", json.dumps(dict(span.attributes)))
+        samples = {tuple(sorted(sample.labels.items())): sample.value for family in self.logger.source_usage.collect()
+                   for sample in family.samples if sample.name == "llm_gateway_source_tokens_total"}
+        for token_type, expected in [("input", 30), ("output", 20), ("input_cached", 5), ("output_reasoning", 12)]:
+            self.assertEqual(samples[tuple(sorted({"source_ip": "198.51.100.7", "model": "source-model", "token_type": token_type}.items()))], expected)
 
     async def test_concurrent_streams_do_not_share_timestamps(self):
         requests = []
@@ -155,6 +178,37 @@ class StrataTelemetry(unittest.TestCase):
         exporter.update({"engine": {"model": "new-model"}, "hardware": {}, "requests": []})
         self.assertIsNone(exporter.REGISTRY.get_sample_value("strata_extra_disk_read_bytes_per_second", {"model": "old-model"}))
         self.assertIsNone(exporter.REGISTRY.get_sample_value("strata_extra_disk_read_bytes_per_second", {"model": "new-model"}))
+
+
+class SourceAccounting(unittest.TestCase):
+    def test_untrusted_forwarding_and_request_metadata_cannot_choose_source(self):
+        source = gateway.source_address({"requester_ip_address": "127.0.0.1", "source_ip": "198.51.100.99"},
+                                        {"x-forwarded-for": "198.51.100.8", "x-real-ip": "198.51.100.9"}, "172.18.0.10/32")
+        self.assertEqual(source["source_ip"], "127.0.0.1")
+        self.assertEqual(source["source_ip_origin"], "transport_peer")
+        self.assertEqual(gateway.source_address({}, {"x-forwarded-for": "198.51.100.8"}, "")["source_ip"], "unknown")
+
+    def test_proxy_chain_uses_nearest_untrusted_hop_and_rejects_malformed_values(self):
+        peer = {"requester_ip_address": "::ffff:172.18.0.10"}
+        self.assertEqual(gateway.source_address(peer, {"x-forwarded-for": "192.0.2.9, 198.51.100.8, 172.18.0.11"},
+                                                "172.18.0.0/24")["source_ip"], "198.51.100.8")
+        self.assertEqual(gateway.source_address(peer, {"x-forwarded-for": "invalid, 198.51.100.8"},
+                                                "172.18.0.0/24")["source_ip"], "172.18.0.10")
+        self.assertEqual(gateway.canonical_ip("2001:0db8::1"), "2001:db8::1")
+
+    def test_durable_counts_overflow_and_missing_usage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "usage.sqlite3")
+            collector = gateway.SourceUsageCollector(path, max_series=1)
+            collector.record("first", "198.51.100.7", "m", {"input_tokens": 30, "output_tokens": 20})
+            collector.record("first", "198.51.100.7", "m", {"input_tokens": 30, "output_tokens": 20})
+            collector.connection.close()
+            restored = gateway.SourceUsageCollector(path, max_series=1)
+            restored.record("first", "198.51.100.7", "m", {"input_tokens": 30, "output_tokens": 20})
+            restored.record("second", "198.51.100.8", "m", {}, failed=True)
+            rows = restored._db().execute("SELECT source_ip, model, input, output, success, error, missing FROM source_totals ORDER BY source_ip").fetchall()
+            self.assertEqual(rows, [("198.51.100.7", "m", 30, 20, 1, 0, 0), ("overflow", "all", 0, 0, 0, 1, 1)])
+            restored.connection.close()
 
 
 if __name__ == "__main__":

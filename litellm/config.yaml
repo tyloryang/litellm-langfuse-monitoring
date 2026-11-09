@@ -22,3 +22,5 @@ litellm_settings:
   prometheus_metrics_max_series_per_metric: 5000
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  # Resolve forwarded IPs only through the callback's explicit trusted proxy list.
+  use_x_forwarded_for: false

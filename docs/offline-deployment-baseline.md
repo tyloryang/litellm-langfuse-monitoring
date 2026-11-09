@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 历史 WSL 复用部署 | LiteLLM 1.106.6、Langfuse 4.73.0、真实 Strata 推理与工具链已验证 | 在目标麒麟 SP / 架构上重新验证并记录证据 |
 | 麒麟系统 | 已明确 RPM / YUM 交付路线 | 记录实际 SP / Build、内核 / glibc / 架构，锁定匹配的系统与 Docker 发行包 |
-| 看板 | 51 指标面板、78 查询、16 recording rule、9 告警已验证 | 目标 Prometheus / Grafana 配置与在线数据复核 |
+| 看板 | 59 指标面板、94 查询、16 recording rule、9 告警；含来源 IP 用量 | 目标 Prometheus / Grafana 配置与在线数据复核 |
 | Python | 直接依赖版本已列明 | 生成该目标平台的完整传递依赖锁与 wheelhouse，在空 venv 无网安装成功 |
 | 镜像 | 9 个 DDN 来源、manifest digest 与 amd64 配置元数据已核查 | 验证整套候选版本、回调依赖与 MinIO shell 后锁 image ID 并导出 |
 | 全新离线部署 | **待验收** | 断网冷安装、冷启动、重启与持久化、回滚均通过 |
@@ -29,7 +29,7 @@ VM-01 可按 16 vCPU、48–64 GiB RAM、300 GiB SSD 起步规划，再根据保
                                       │ Worker / PostgreSQL / ClickHouse / Redis / MinIO
 VM-02 Prometheus ── HTTP :9401 /metrics ── Nginx ── LiteLLM
                  └─ GPU VM 原生指标 / Strata JSON exporter :9402
-VM-03 Grafana ── 已有 Prometheus 数据源 ── 51 面板
+VM-03 Grafana ── 已有 Prometheus 数据源 ── 59 面板
 ```
 
 | 访问方向 | 目标 | 配置位置 / 要求 |
@@ -143,7 +143,7 @@ fi
 | TLS 与信任 | server.crt、server.key、完整 CA 链 / 内部根证书，SAN 包含实际 DNS / IP；系统和浏览器信任已导入；单独交付私钥 |
 | 模型配置 | `model_name` 是网关别名，`openai/` 后为真实上游 ID；api_base 含 `/v1`，未部署的路由删除；请求列表与验收矩阵一致 |
 | Prometheus | 完整主配置的合并方案、scrape 片段、16 recording rule、9 alert、Token 文件及其容器挂载 / UID；不覆盖既有主配置 |
-| Grafana | 51 面板 JSON、数据源 UID / 变量、provisioning 或导入步骤、已有 Alertmanager 通知路由 |
+| Grafana | 59 面板 JSON、数据源 UID / 变量、provisioning 或导入步骤、已有 Alertmanager 通知路由 |
 | Strata 补充导出器 | Python wheel、`strata_extra.py`、服务单元、STRATA_API_KEY、JSON 地址、监听地址 / 防火墙；默认 9402 |
 | GPU 推理运行时 | 复用服务则记录版本 / 模型 ID / 内网地址；新装则带全部模型权重分片、tokenizer、配置、引擎二进制 / 镜像、依赖库和 GPU 驱动 / CUDA / CANN 等对应物料 |
 | 模型校验 | 权重和 tokenizer 全部文件的大小 / SHA-256；本地路径、许可文件、上下文 / 量化 / 参数配置；不允许启动时自动下载缺失分片 |
@@ -396,7 +396,7 @@ tar -xf "$BUNDLE/source.tar" -C /opt/llm-gateway
 cd /opt/llm-gateway
 cp .env.example .env
 chmod 600 .env
-mkdir -p nginx/certs data/nginx-logs
+mkdir -p nginx/certs data/nginx-logs data/source-usage
 chmod 700 nginx/certs
 # 拷贝企业 CA 签发的 server.crt / server.key，SAN 包含实际 IP / DNS。
 chmod 600 nginx/certs/server.key
@@ -408,6 +408,8 @@ editor .env litellm/config.yaml nginx/nginx.conf
 - `HOST_IP` 是 VM-01 实际地址；`NEXTAUTH_URL=https://VM01:8444`，对象存储公开 endpoint 必须从实际浏览器可达。
 - 使用 `openssl rand -hex 24` 生成数据库 / Redis / MinIO 密码，避免拼入 DATABASE_URL 时需要转义的 `@:/#` 等字符；`ENCRYPTION_KEY` 用 `openssl rand -hex 32`，SALT / NEXTAUTH_SECRET 另行生成。迁移既有数据时保留原加密键。
 - `LITELLM_OTEL_V2=false`、`LITELLM_LOCAL_MODEL_COST_MAP=True`，回调只能是 `prometheus` 与 `observability_callback.observability`；不要同时启用 `langfuse_otel` 重复上报。项目 Keys 允许在首次创建项目前为空，创建后必须补齐。
+- 来源账本挂载 `data/source-usage`，按实际 LiteLLM 镜像 UID / GID 授予目录读写与遍历权限并设置 SELinux 标签。SQLite 需要同目录创建 WAL / SHM；使用标准库 sqlite3，不新增镜像或 pip 包。设置 `GATEWAY_SOURCE_USAGE_DB=/var/lib/llm-observability/usage.sqlite3`，单 worker 运行。
+- `general_settings.use_x_forwarded_for=false`、空 `FORWARDED_ALLOW_IPS` 保留连接 peer。Nginx 启动后发现其实际 IP，将 `GATEWAY_TRUSTED_PROXY_CIDRS` 填为该 `/32`（IPv6 `/128`）并只重建 LiteLLM；也可使用准备机验证过的固定代理地址方案。Nginx 重建换 IP 后更新；不信任整个业务网络。验证覆盖外来 XFF / X-Real-IP，不能用请求自报的 `metadata.source_ip` 归属用量。
 - `LANGFUSE_HOST=http://langfuse-web:3000` 是网关容器内部地址；宿主验收客户端使用 8444，不能把内部 DNS 交给外部客户端。模型 Keys / Master Key 在目标现场填写，删除未部署的模型路由。
 - Nginx :9401 的 `allow` 改为真实 VM-02 来源；证书路径、SSE `proxy_buffering off`、长请求超时、内网 DNS / 时钟正确。
 - 选择是否配置本地模型实际费用。未配价格必须标为 unconfigured；不得把 0 当成已验收的免费成本。
@@ -543,22 +545,26 @@ export GATEWAY_MODEL=qwen-strata
 
 ### 6.3 Grafana 指标与公式
 
-- 51 面板已导入、数据源有效；78 条 PromQL 查询全部执行成功，实际部署指标的关键序列为有限数值。未部署的可选引擎可无数据，但必需 job 不得缺失。
+- 59 面板已导入、数据源有效；94 条 PromQL 查询全部执行成功，实际部署指标的关键序列为有限数值。未部署的可选引擎可无数据，但必需 job 不得缺失。
 - 网关有请求与输入 / 输出 Token 增量，真实流式有 TTFT / TPOT；Langfuse TTFT 与回调 metadata 一致，usage 互斥细分相加等于 raw total。
 - 公式已核查：`TPOT=(last-first)/(N−1)`；P95 来自合并 bucket；网关 Token/s 和 QPS 是固定 `[5m]`；VRAM 为 `100×used/total`；前缀 / MTP 用 Token 加权；MiB/s 乘 1048576；SSE 帧不当作 Token。
 - Strata context occupancy 与物理 KV 分开；Strata ITL 是按间隔数加权的平均值估计。空闲 / 冷启没有分位样本时保持无值，不强制补 0 秒。
+- 两个真实客户端来源分别完成已知 usage 的请求，Langfuse `source_ip` 与入口可见地址一致，按 IP 累计差值等于返回的输入 / 输出；伪造 XFF / `metadata.source_ip` 不改变归属。核对第 07 分区筛选、累计总量=input+output，缓存 / 推理不重复加入。所选时段 `increase` 是采样外推，允许小数及采样边界差异；NAT 后不能还原的来源按实际限制记录，不能填成原始客户端 IP。
 - 断开一个测试 exporter 验证 UP / 告警与恢复，只在实验环境执行；不修改现有 Alertmanager receiver。异常 / 中断请求在 Langfuse 可见，OTLP 失败 / 本地构造错误有记录。
 
 ### 6.4 冷启动、持久化与恢复
 
 - 外网仍受限时重启麒麟测试主机，确认 Docker、系统级 exporter service、模型服务自动恢复，原有 Trace / 用户 / 仪表盘 / 数据不丢失；SELinux 标签、firewalld、Docker 存储 / cgroup、CA 信任与实际版本保持一致。
 - 用新的请求再次验证推理、Langfuse、Token / TTFT / TPOT、GPU、缓存和工具链；没有首次请求下载依赖的等待或外网回退。
+- 来源账本持久化状态为 1、写入错误为 0；重启后累计值及统计开始时间不变，新请求继续增加。按 [来源账本备份恢复](source-ip-usage.md#配置持久化与离线部署) 使用 SQLite backup API 取得一致性副本并在实验环境恢复，不单独拷贝活跃 WAL 主文件。
 - 实验环境执行一致性备份 / 恢复，使用原镜像锁、配置和加密键；确认历史 Trace 可查、模型路由可用。
 - 记录包版本 / checksum 摘要、实际镜像 ID、平台、CA、内网拓扑、请求 / Trace ID、全部报告和人工页面检查结果，才可签署“完全离线部署通过”。
 
 ## 7. 备份、回滚和常见阻断
 
 迁移 / 升级前先保存原镜像锁、配置、证书、加密键和一致性数据备份。停写后再做 PostgreSQL / ClickHouse / Redis / MinIO 的一致性快照或使用各自原生备份。恢复时按原版本先依赖后应用，核对 UID/GID。不要在没有备份时执行 `down -v`、删除 data 或修改 ENCRYPTION_KEY。
+
+来源用量额外包含 `data/source-usage`：使用 SQLite backup API 或停止网关后备份整个目录，恢复时不要混入旧 WAL / SHM。无需额外镜像 / RPM / wheel，但独立 Python 及 LiteLLM 容器均须具备可用的 sqlite3。累计周期、代理信任和缺失 usage 的处理见 [来源 IP 与 Token 用量](source-ip-usage.md)。
 
 | 阻断 | 处理与重新验收 |
 | --- | --- |
@@ -575,6 +581,7 @@ export GATEWAY_MODEL=qwen-strata
 | 8443 / 8444 TLS 失败 | SAN、CA 链、时钟、Nginx 配置、客户端信任；验收不以 `-k` 跳过证书验证 |
 | Prometheus 403 / 401 | 分别核对 Nginx allow 的真实来源与 Bearer Token / 容器文件权限 |
 | Grafana 指标空白 | 先验证目标 UP、16 条规则、模型标签与数据源；可选 / 无流量指标和真正采集失败分开判定 |
+| 来源只有代理 IP / Token 不增长 | 核对可信代理实际地址、转发覆盖、回调已加载、请求已完成及 usage 完整；检查账本目录 UID / SELinux、持久化与写入错误，不通过任意信任 XFF 绕过 |
 | 离线登录 / 媒体依赖公网 | 替换为本地账号、内部 DNS / NTP / CA / 对象存储，验证实际浏览器访问 |
 
 官方参考用于准备机选版本审计，实施时所需配置和说明必须已经在包中：

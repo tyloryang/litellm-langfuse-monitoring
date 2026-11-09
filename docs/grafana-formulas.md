@@ -1,6 +1,6 @@
 # Grafana 看板计算公式与统计口径
 
-**本页覆盖全部 51 个指标面板、78 条实际 PromQL。每个面板的公式也写入 Grafana 的说明，点击标题旁的信息图标即可查看。** 看板顶部另提供本页入口。公式、查询和本页由 `ops/build_dashboard.py` 一起生成，避免文档与看板各自维护。
+**本页覆盖全部 59 个指标面板、94 条实际 PromQL。每个面板的公式也写入 Grafana 的说明，点击标题旁的信息图标即可查看。** 看板顶部另提供本页入口。公式、查询和本页由 `ops/build_dashboard.py` 一起生成，避免文档与看板各自维护。
 
 ## 先看这些容易误读的公式
 
@@ -25,7 +25,7 @@
 - `rate` / `increase` 会处理累计值下降的重置并对窗口边界外推，所以请求数 / Token 增量可能不是整数。`rate` 至少需要两个样本；没有请求或样本不足时可以无值 / NaN，不能填成 0 秒延迟。
 - `Q(q)` 在本页统一表示 `histogram_quantile(q, sum by (le) (rate(<metric>_bucket[W])))`。本看板的延迟分位按所选模型及其全部实例合并 bucket；不保留逐模型 / 实例曲线。桶内使用分布估计，精度受 bucket 和样本数限制。
 - **网关输入 / 输出 Token/s、QPS 和引擎 Token/s 的 recording rule 使用固定 `[5m]`，每 15 秒求值。** 它们不会因为 Grafana 切换时间范围而变成 1m 或瞬时速率。
-- 网关筛选使用 `requested_model`（自定义时延使用 `model`）；原生引擎使用 `model_name`，归一化后为 `model`；GPU 按 `deployment, gpu` 筛选。四类筛选器分别作用于对应查询，不是全局所有面板过滤器。
+- 网关筛选使用 `requested_model`（自定义时延与来源计量使用 `model`）；原生引擎使用 `model_name`，归一化后为 `model`；GPU 按 `deployment, gpu` 筛选。来源 IP 筛选只作用于第 07 区的来源用量 / 速率面板，其他面板仍保留原聚合范围。
 - GPU recording rule 先按 `(deployment, gpu)` 取 max 去重，再以 PromQL `or` 优先选 Strata、缺失时选 DCGM；不是把两个采集源相加。引擎归一化只复制模型标签并选择对应引擎指标，不改变 histogram 的计数语义。
 - `percent` 接收 0–100，`percentunit` 接收 0–1 并显示为百分数；容量基础单位为字节，`Bps` 表示字节 / 秒。MiB/s 到 B/s 的换算固定乘 2²⁰，与 Grafana 自动选择的显示前缀分开理解；`W × s` 才是能量，功耗 W 不是电量 kWh。
 - “最近请求”是 gauge，空闲仍保留最后请求值；不是“此刻正在生成”的值。timeseries 图例 `Last` / `Max` 是曲线值的最近 / 最大值；P95 曲线的 Max 只是窗口 P95 的最大值，不是请求最大延迟。
@@ -1309,6 +1309,222 @@ sum(increase(litellm_spend_metric_total{requested_model=~"$gateway_model"}[$__ra
 查询 A：
 ```promql
 llm:engine_kv_usage_ratio{model=~"$engine_model"}
+```
+
+## 07 · 来源 IP 与 Token 用量
+
+### 来源 IP Token 用量 · 所选时段
+
+面板 ID：`59`；类型：`table`。
+
+**计算公式**
+
+对每个来源 IP 分别计算 `I=Σ increase(source_tokens_total{token_type="input"}[R])`、`O=Σ increase(...{token_type="output"}[R])`、`Total=I+O`、`Requests=Σ increase(source_requests_total[R])`。
+
+**统计口径与边界**
+
+R 为所选时间跨度，表格使用当前时点 instant 查询并按 source_ip 关联列，模型和来源 IP 筛选均生效。输入包含缓存、输出包含推理，细分不可再次加到总量。increase 为采样估算，窗口边界及首次抓取会影响结果；精确的启用后累计量见旁边累计表。
+
+**单位**：计数或原始 gauge；具体单位见该序列口径。
+
+**实际 PromQL**
+
+查询 A：
+```promql
+sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input"}[$__range]))
+```
+
+查询 B：
+```promql
+sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"output"}[$__range]))
+```
+
+查询 C：
+```promql
+sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input|output"}[$__range]))
+```
+
+查询 D：
+```promql
+sum by (source_ip) (increase(llm_gateway_source_requests_total{model=~"$gateway_model",source_ip=~"$source_ip"}[$__range]))
+```
+
+### 来源 IP Token 累计 · 启用以来
+
+面板 ID：`60`；类型：`table`。
+
+**计算公式**
+
+每个来源 IP：`I=Σ source_tokens_total{token_type="input"}`、`O=Σ ...{token_type="output"}`、`Total=I+O`、`Requests=Σ source_requests_total`。
+
+**统计口径与边界**
+
+SQLite 持久化累计值从来源统计开始时间计数，重启不清零；此表不受看板时间范围过滤，模型和来源 IP 筛选仍生效。只统计经过网关且收到最终 usage 的计量，缺失 usage 的请求单独计数；失败请求有有效 usage 时也计入。历史未采集来源 IP 的请求不能回溯归属。
+
+**单位**：计数或原始 gauge；具体单位见该序列口径。
+
+**实际 PromQL**
+
+查询 A：
+```promql
+sum by (source_ip) (llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input"})
+```
+
+查询 B：
+```promql
+sum by (source_ip) (llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"output"})
+```
+
+查询 C：
+```promql
+sum by (source_ip) (llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input|output"})
+```
+
+查询 D：
+```promql
+sum by (source_ip) (llm_gateway_source_requests_total{model=~"$gateway_model",source_ip=~"$source_ip"})
+```
+
+### 来源 IP 输入 / 输出 Token 速率
+
+面板 ID：`61`；类型：`timeseries`。
+
+**计算公式**
+
+每 IP 分别计算 `Σ rate(source_tokens_total{token_type="input"}[W])` 与 `Σ rate(...{token_type="output"}[W])`。
+
+**统计口径与边界**
+
+W=$__rate_interval，单位 Token/s，先对每条 counter 求 rate 再按来源 IP 求和；输入包含缓存、输出包含推理。请求结束时累计最终 usage，长请求会在完成时形成阶梯。
+
+**单位**：Token / 秒。
+
+**实际 PromQL**
+
+查询 A：
+```promql
+sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input"}[$__rate_interval]))
+```
+
+查询 B：
+```promql
+sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"output"}[$__rate_interval]))
+```
+
+### 来源 IP 缓存 / 推理 Token 速率
+
+面板 ID：`62`；类型：`timeseries`。
+
+**计算公式**
+
+每 IP 分别计算 `Σ rate(source_tokens_total{token_type="input_cached"}[W])` 和 `Σ rate(...{token_type="output_reasoning"}[W])`。
+
+**统计口径与边界**
+
+缓存与推理分别是输入和输出子集，不能重复加总。上游缺少细分字段时累计值保持 0，是否实际提供细分以 Langfuse usage_raw 为准。
+
+**单位**：Token / 秒。
+
+**实际 PromQL**
+
+查询 A：
+```promql
+sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input_cached"}[$__rate_interval]))
+```
+
+查询 B：
+```promql
+sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"output_reasoning"}[$__rate_interval]))
+```
+
+### 来源 IP usage 缺失请求
+
+面板 ID：`63`；类型：`timeseries`。
+
+**计算公式**
+
+每 IP `Missing=Σ increase(llm_gateway_source_usage_missing_total[R])`。
+
+**统计口径与边界**
+
+最终 prompt/input 与 completion/output Token 数缺失或无效时加 1；不使用帧数估计 Token。请求数仍记录，Token 累计可能低于实际消耗。
+
+**单位**：计数或原始 gauge；具体单位见该序列口径。
+
+**实际 PromQL**
+
+查询 A：
+```promql
+sum by (source_ip) (increase(llm_gateway_source_usage_missing_total{model=~"$gateway_model",source_ip=~"$source_ip"}[$__range]))
+```
+
+### 来源统计持久化状态
+
+面板 ID：`64`；类型：`stat`。
+
+**计算公式**
+
+`persistent=1` 当 GATEWAY_SOURCE_USAGE_DB 为磁盘数据库，否则 `persistent=0`。
+
+**统计口径与边界**
+
+必须把数据库目录放在持久化挂载或 WSL 数据目录，并保留读写权限。来源 IP / 模型明细默认上限 1024 组，额外来源合并至 source_ip=overflow、model=all；unknown 表示无法取得有效传输来源。
+
+1=使用持久化 SQLite；0=内存模式，重启丢失累计值。
+
+**单位**：计数或原始 gauge；具体单位见该序列口径。
+
+**实际 PromQL**
+
+查询 A：
+```promql
+llm_gateway_source_usage_persistent
+```
+
+### 来源统计开始时间
+
+面板 ID：`65`；类型：`stat`。
+
+**计算公式**
+
+`started_display=1000 × 首次创建来源计量数据库时的 Unix 时间戳（秒）`，转换成 Grafana 日期格式所需的毫秒。
+
+**统计口径与边界**
+
+创建时间存入 SQLite，服务重启时沿用，删除计量数据库才会重新开始。它标记累计表覆盖的起点，不表示旧历史已补算。
+
+累计表以该时间为起点，时间筛选只作用于区间表及速率。
+
+**单位**：Unix 毫秒，由 Grafana 显示为日期时间。
+
+**实际 PromQL**
+
+查询 A：
+```promql
+1000 * llm_gateway_source_tracking_started_timestamp_seconds
+```
+
+### 来源统计写入失败
+
+面板 ID：`66`；类型：`stat`。
+
+**计算公式**
+
+`Errors=increase(llm_gateway_source_usage_errors_total[R])`。
+
+**统计口径与边界**
+
+来源计量准备或终结写库失败时加 1。计量失败不会中止模型请求，非零需结合日志确认缺失范围；进程 counter 重启归零由 increase 处理。
+
+非零时来源统计可能不完整，应检查网关日志。
+
+**单位**：计数或原始 gauge；具体单位见该序列口径。
+
+**实际 PromQL**
+
+查询 A：
+```promql
+increase(llm_gateway_source_usage_errors_total[$__range])
 ```
 
 ## 归一化与 recording rule 的完整公式

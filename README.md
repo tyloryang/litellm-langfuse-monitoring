@@ -12,7 +12,7 @@ LiteLLM 网关、Grafana 推理指标和 Langfuse 工具链路配置。**离线�
 
 | 服务 | Windows 访问地址 | 用途 |
 | --- | --- | --- |
-| Grafana | [推理观测看板](http://localhost:3002/d/litellm-gpu-overview) | 51 个指标面板、6 个分区 |
+| Grafana | [推理观测看板](http://localhost:3002/d/litellm-gpu-overview) | 59 个指标面板、7 个分区 |
 | Langfuse | [项目观测列表](http://localhost:3001/project/7e8bc81c-0f6b-4377-bd85-9e06624fbafb/traces) | 输入输出、推理 Token、工具执行和 Session |
 | LiteLLM | `http://localhost:4000/v1` | 模型别名 `qwen-strata` |
 | Strata | [Strata Monitor](http://localhost:8080) | 推理引擎及原始监控，需要既有认证 |
@@ -29,6 +29,7 @@ LiteLLM 网关、Grafana 推理指标和 Langfuse 工具链路配置。**离线�
 | 缓存与上下文 | 前缀命中率、专家缓存、会话缓存、MTP 接受率、上下文占用、槽位、驻留 KV 位置 |
 | 硬件 | 显存容量、GPU 温度与功耗、PCIe、CPU、RAM、磁盘吞吐 |
 | 数据质量 | 抓取健康、JSON 数据年龄、Langfuse 上报错误、价格配置状态、其他引擎 KV 指标 |
+| 来源 IP 与用量 | 按来源 IP 的时段 / 累计输入、输出、总 Token、请求数、缓存 / 推理速率及持久化状态 |
 
 指标参考 [vLLM](https://github.com/vllm-project/vllm)、[SGLang](https://github.com/sgl-project/sglang)、[NVIDIA dcgm-exporter](https://github.com/NVIDIA/dcgm-exporter)，并以本机 Strata Monitor 的实际实现和采样数据校正。详见 [指标定义与调查结果](docs/observability-findings.md)。
 
@@ -36,7 +37,7 @@ TPOT 使用成功流式请求的 `(最后输出时间 - 首次输出时间) / (c
 
 ## Grafana 计算公式（重点）
 
-**全部 51 个指标面板都标注了计算公式、统计口径、单位和实际 PromQL。** 在看板点击面板标题旁的信息图标，或打开顶部“计算公式与指标口径（51 面板）”链接。完整说明见 [Grafana 看板计算公式与统计口径](docs/grafana-formulas.md)。
+**全部 59 个指标面板、94 条查询都标注了计算公式、统计口径、单位和实际 PromQL。** 在看板点击面板标题旁的信息图标，或打开顶部“计算公式与指标口径（59 面板）”链接。完整说明见 [Grafana 看板计算公式与统计口径](docs/grafana-formulas.md)。
 
 | 重点指标 | 计算公式 | 口径限制 |
 | --- | --- | --- |
@@ -49,8 +50,11 @@ TPOT 使用成功流式请求的 `(最后输出时间 - 首次输出时间) / (c
 | 前缀命中率 / MTP 接受率 | `sum(rate(命中或接受 Token[W])) / max(sum(rate(查询或草稿 Token[W])), 10⁻⁶)` | Token 加权，非请求加权；W 为 Grafana 的动态速率窗口 |
 | 最近 Prefill 吞吐 | `max(0, prompt_tokens − reused) / (prompt_ms / 1000)` | 排除缓存复用 Token，缺少处理时间时无有效值 |
 | PCIe / 磁盘吞吐 | `原始 MiB/s × 1048576 → B/s` | 原始字段已经是速率，不再次调用 rate |
+| 按来源 IP 的时段 / 累计 Token | `sum by (source_ip) (increase(counter[所选时段]))` / `sum by (source_ip) (counter)` | 时段值由采样外推；累计值来自持久账本，总量只加 input + output |
 
 公式说明和看板由 `python ops/build_dashboard.py` 同时生成，保证文档中的 PromQL 与面板一致。
+
+来源 IP 在看板底部 **07 · 来源 IP 与 Token 用量** 查看，顶部“来源 IP”可筛选。Langfuse 的新 Trace / GENERATION Metadata 包含 `source_ip`、连接 peer 和判定来源。代理信任、NAT 限制、累计持久化与缺失历史的原因见 [来源 IP 统计说明](docs/source-ip-usage.md)。
 
 ## Langfuse 改进
 
@@ -81,7 +85,7 @@ litellm/observability_callback.py       网关时延、usage、OTLP 回调
 exporters/strata_extra.py              Strata Monitor JSON 补充指标
 prometheus/recording-rules.yml         指标归一化
 prometheus/alerts.yml                  9 条告警规则
-ops/build_dashboard.py                生成 51 面板 Grafana JSON
+ops/build_dashboard.py                生成 59 面板 Grafana JSON 与公式文档
 ops/deploy_wsl.py                      发现并更新现有 WSL 部署
 ops/verify_runtime.py                  在线抓取 / PromQL / 真实链路验收
 examples/traced_tool_agent.py          真实客户端工具链路
@@ -96,6 +100,6 @@ tests/test_observability.py            流式语义、父子关联、异常和�
 
 9 个核心镜像的默认获取来源已换成[渡渡鸟 DDN 镜像](docs/ddn-images.md)：`.env.example` 与 `offline/images.example.env` 使用已核查的 SWR 地址和固定 manifest digest，`offline/ddn-image-map.amd64.tsv` 提供完整映射。联网准备机可运行 `bash ops/pull-from-ddn.sh` 拉取，离线目标仍导入镜像包并使用本地锁定别名。当前清单针对 amd64，新装候选 Langfuse 为 Web / Worker 4.63.0；本机既有 4.73.0 的迁移与麒麟运行验收需单独处理。
 
-最终以干净麒麟目标机从冷安装起禁止互联网出口、完成真实推理、Langfuse 工具链、51 面板 / 78 查询、重启持久化及备份恢复为准。用 [离线验收记录模板](docs/offline-acceptance-template.md) 保存分项证据。**WSL 复用环境通过不代表麒麟已适配验收；具体 SP / Build / 架构的物料制作与断网冷装验收待执行。**
+最终以干净麒麟目标机从冷安装起禁止互联网出口、完成真实推理、Langfuse 工具链、59 面板 / 94 查询、按来源 IP 用量、重启持久化及备份恢复为准。来源账本仅新增 SQLite 数据目录，不增加镜像或 pip 依赖。用 [离线验收记录模板](docs/offline-acceptance-template.md) 保存分项证据。**WSL 复用环境通过不代表麒麟已适配验收；具体 SP / Build / 架构的物料制作与断网冷装验收待执行。**
 
 当前网关回调按单 worker 验收；多 worker 的 Prometheus 聚合需要额外配置。vLLM / SGLang / DCGM 为预留兼容接入，本机没有部署这些目标。
