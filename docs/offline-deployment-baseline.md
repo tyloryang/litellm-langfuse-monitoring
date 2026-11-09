@@ -1,14 +1,17 @@
 # 完全离线部署：物料、准备、实施与验收
 
-更新日期：2026-11-09。目标基线：Ubuntu 24.04、Linux amd64、Python 3.12；Windows 使用 WSL2。arm64 必须单独准备镜像、wheel、系统包和模型运行时，不混用 amd64 的包。
+更新日期：2026-11-09。**离线目标为麒麟 V10 服务器环境，按类似 CentOS 7.9 的 RPM / YUM 运维方式准备，不再以 Ubuntu / WSL 为离线安装基线。** 现场需记录具体产品、SP / Build、内核、glibc 和 CPU 架构；“类似 CentOS 7.9”不代表能直接安装任意 el7 RPM，也不代表 glibc 一定是 2.17。
+
+应用及验收工具使用 Python 3.12；麒麟自带的系统 Python 保留。`x86_64` 对应镜像平台 `linux/amd64`，`aarch64` 对应 `linux/arm64`，两套镜像、wheel、RPM 和 GPU 运行时分开准备。其他架构须单独适配，本仓库物料工具目前只接受这两个平台。
 
 **交付验收以“干净目标机在禁止互联网出口、允许部署内网通信时，完成冷安装、真实推理、Trace / 工具链与 Grafana 展示”为准。文件校验通过、Compose 语法通过和容器启动都只是中间步骤。**
 
-目前已完成的是既有 WSL 环境的真实链路验收；尚未制作并交付一套完整的离线物料，也尚未在干净断网机完成全新 Compose 验收。下表和末尾验收记录用于后续逐项收口，不将复用部署结果当作新装成功。
+目前已完成的是既有 Ubuntu / WSL 环境的真实链路验收；**尚未在麒麟 V10 完成适配实测，也未制作并交付完整离线物料**。下表和末尾验收记录用于后续逐项收口，不将 WSL 复用部署结果当作麒麟新装成功。
 
 | 范围 | 当前证据 | 后续发布门槛 |
 | --- | --- | --- |
-| WSL 复用部署 | LiteLLM 1.106.6、Langfuse 4.73.0、真实 Strata 推理与工具链已验证 | 断网条件下重新检查并记录证据 |
+| 历史 WSL 复用部署 | LiteLLM 1.106.6、Langfuse 4.73.0、真实 Strata 推理与工具链已验证 | 在目标麒麟 SP / 架构上重新验证并记录证据 |
+| 麒麟系统 | 已明确 RPM / YUM 交付路线 | 记录实际 SP / Build、内核 / glibc / 架构，锁定匹配的系统与 Docker 发行包 |
 | 看板 | 51 指标面板、78 查询、16 recording rule、9 告警已验证 | 目标 Prometheus / Grafana 配置与在线数据复核 |
 | Python | 直接依赖版本已列明 | 生成该目标平台的完整传递依赖锁与 wheelhouse，在空 venv 无网安装成功 |
 | 镜像 | 当前运行镜像可作为版本取证参考 | 选定全部 9 个兼容镜像、检查回调依赖和 MinIO shell 后锁 image ID 并导出 |
@@ -43,24 +46,52 @@ VM-03 Grafana ── 已有 Prometheus 数据源 ── 51 面板
 
 ## 2. 必须准备的物料清单
 
-### 2.1 系统、Docker 和 Windows / WSL
+### 2.1 麒麟 V10 系统、Docker 与 RPM 依赖
+
+先在目标机、联网准备机和断网验收机分别执行下列只读检查。准备机必须是同产品、同 SP / Build、同架构的麒麟环境，至少与目标初始 RPM 基线匹配；Ubuntu WSL 可以编辑文档，但不能用其 apt 包、Python 二进制或 wheel 下载结果代替麒麟发行物。
+
+```bash
+cat /etc/os-release
+if [ -f /etc/kylin-release ]; then cat /etc/kylin-release; fi
+if [ -f /etc/.productinfo ]; then cat /etc/.productinfo; fi
+uname -m
+uname -r
+getconf GNU_LIBC_VERSION
+rpm -q kylin-release glibc systemd openssl libseccomp selinux-policy container-selinux
+rpm -qa --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort
+getenforce
+findmnt -T /var/lib
+if command -v docker >/dev/null 2>&1; then
+  docker version
+  docker info
+  docker compose version
+fi
+```
+
+某个候选包尚未安装时 `rpm -q` 可返回非零，记录缺失后由物料清单补齐；不能据此跳过其依赖。记录命令的输出放在私有验收目录，特别核对 Docker context 指向当前目标机。
 
 | 物料 | 必须包含 | 验证方法 |
 | --- | --- | --- |
-| Linux 基础系统 | 相同发行版 / 架构的安装介质或干净 rootfs，记录 `/etc/os-release` | 目标机 OS、架构和 glibc 与准备机一致 |
-| Windows / WSL（仅 Windows） | 支持 WSL2 的 Windows、WSL 离线安装包 / 内核、Ubuntu rootfs tar；提前启用虚拟化与相关功能 | 不依赖 Microsoft Store；`wsl --version`、`wsl -l -v`；必要重启已完成 |
-| Docker Engine | 选定的一套包：Ubuntu 的 `docker.io` + `containerd` + `runc`，或官方 `docker-ce` / `docker-ce-cli` / `containerd.io`；含完整系统依赖 | 不混装两套；`docker version`、`docker info`；daemon 可启动 |
+| 麒麟系统 | 实际麒麟 V10 产品 / SP / Build / 架构的 ISO、已启用仓库的版本快照、RPM 签名公钥及可信指纹 | `/etc/os-release`、`/etc/.productinfo`、内核和初始 RPM 清单一致 |
+| Docker Engine | 优先选该麒麟版本适配的 `docker` / `docker-engine` 及配套 containerd / runc；或已实测兼容的 `docker-ce` / `docker-ce-cli` / `containerd.io` 组合，包含完整 RPM 闭包 | 记录精确 NEVRA；不混装两套、不直接装最新 el9 / el10 包；daemon 和容器实际可运行 |
 | Docker 静态发行版（若选此方式） | 完整官方 tar 中的 daemon、CLI、containerd、shim、runc、docker-proxy、docker-init 和 systemd 单元 | 不能只拷贝一个 `docker` CLI；保留发行版本与校验值 |
-| Compose 插件 | 对应架构的完整 `docker-compose` 二进制或发行版插件包 | `docker compose version`；可执行权限与文件 SHA-256 正确 |
-| Python | `python3.12`、`python3.12-venv` / ensurepip、pip 及其系统依赖 | 空 venv 能创建，离线安装并执行 `pip check` |
-| 基础工具 | `ca-certificates`、`openssl`、`curl`、`tar`、`gzip`、`coreutils`、`iproute2`、防火墙 / iptables 相关依赖；NTP 内网源 / 时区配置 | CA、SAN、时钟、磁盘与网络可验证；不在目标机运行在线 apt update |
+| Docker 系统依赖 | 按选定包解析 `libseccomp`、`libgcc` / `libstdc++`、`iptables` 及 netfilter 库、`container-selinux` / SELinux policy / `policycoreutils`、`audit` 等；仅使用 device-mapper 路线时再带相应 device-mapper / LVM 依赖 | 以同 SP 的 RPM 依赖解析为准，不把候选列表当作完整闭包；SELinux Enforcing 时启动与读写成功 |
+| Compose 插件 | 对应架构的完整 Compose V2 或后续经验证的插件二进制 / RPM；保留 `LICENSE` / 校验值 | `docker compose version`；支持双 `--env-file`、条件 depends_on、`--pull never` 与 `--no-build`；不能用旧 V1 命令替代 |
+| Python 3.12 | 适配目标麒麟的独立前缀发行包 / 自制 RPM、ensurepip / venv、pip、配套 OpenSSL 和全部共享库 | 示例前缀 `/opt/llm-python`；`ssl`、`venv`、原生扩展导入和空 venv 无网安装成功 |
+| Python 系统库 | 按实际构建解析 zlib、bzip2-libs、xz-libs、libffi、sqlite-libs、readline、ncurses-libs、libuuid、libgcc / libstdc++ 等 | 用 `ldd` / 导入测试与 RPM 闭包共同检查；不能只复制 Python 可执行文件 |
+| 基础工具 | `ca-certificates`、`openssl`、`curl`、`tar`、`gzip`、`coreutils`、`iproute`、`util-linux`、`firewalld` / iptables、`chrony`，XFS 时需 `xfsprogs` | 具体包名以该 SP 为准；内网 NTP / 时区、CA、磁盘、网络可验证 |
+| 准备机工具 | YUM 路线的 `yum-utils`（含 yumdownloader）或 DNF 路线的 `dnf-plugins-core`，需要本地 repo 时加 `createrepo` / `createrepo_c` | 先在联网准备机装齐；这些工具自身若需在目标使用，也必须进入离线闭包 |
 | 运维工具 | `promtool` 随现有 Prometheus / 镜像提供；Git 仅准备机打包需要 | 目标机使用源码 tar 即可，不要求 git clone |
 
-本机取证版本为 Docker 29.8.0、Compose v5.7.0、Python 3.12.3；这不是所有目标机的最低版本承诺。目标发行包应选一套已冷装验证的版本并记录。
+已有 Docker / Podman / containerd 时先核对版本、服务和现有业务。`podman-docker` 提供的兼容 CLI 不自动等价于本仓库要求的 Docker Engine；不要直接卸载现有容器运行时、替换 runc 或改动其数据目录。能满足本次配置和镜像运行验收的既有 Docker 可复用，不能满足时先准备独立测试环境和迁移方案。
 
-系统 deb 的完整依赖要在**与目标初始 dpkg 状态相同的干净 VM / rootfs**中解析和下载。联网机器已经安装的依赖可能不会再次下载；只复制 `/var/cache/apt/archives` 或只下载顶层几个 deb，不能证明闭包完整。准备后在克隆的断网目标上执行 `apt-get --no-download install /介质/host/debs/*.deb` 验证；缺包即回到准备机补齐，不允许切回在线仓库兜底。若交付已装好工具的干净 rootfs，则记录其包清单，并验证导入后不需额外 apt 下载。
+历史 WSL 的 Docker 29.8.0、Compose v5.7.0、Python 3.12.3 仅是取证版本，**不能据此认定麒麟或 CentOS 7.9 内核可运行同样的最新版**。Docker 当前 CentOS 安装说明面向其列出的受维护版本，不是麒麟 V10 / CentOS 7.9 的支持承诺。Docker、containerd、runc、Compose 与宿主内核 / systemd / seccomp / cgroup 必须成套验证；发行商较旧的 Docker 也需实测能否运行本次选定的新镜像。
 
-WSL 可在准备机导出专门的干净发行版，再用 `wsl --import LLM-Offline D:\WSL\LLM-Offline ubuntu24.04-rootfs.tar --version 2` 导入。不要为制作安装包而终止或导出当前正在提供推理的生产发行版；rootfs 内也不应夹带现有业务数据库和密钥。数据目录建议放在 WSL ext4 内，Windows 磁盘用于源码 / 交付介质。
+**RPM 闭包在 4.1 准备、5.1 断网安装。** 准备机已装依赖可能掩盖缺包问题，必须下载全部依赖并在与目标初始 RPM 状态一致的干净麒麟克隆机验证。不能从 CentOS 7.9 任意镜像站拼包，也不能用 `rpm --nodeps`、`--force` 或替换系统 glibc 的方式让依赖检查“通过”。
+
+**Python 兼容门槛**：Python 3.12 的 `ssl` 模块要求 OpenSSL 1.1.1 或更新；应选厂商仍维护且已验证的版本。若现场是 1.0.2，只给应用前缀配套独立 OpenSSL，保留系统 OpenSSL / Python / YUM。系统提供 Python 2.7、3.6 等并不满足这些运维脚本。交付 Python 时包含其动态库 / RUNPATH 配置；在目标执行 `import ssl, venv, sqlite3, bz2, lzma, ctypes` 检查，不能仅看 `python --version`。
+
+若需自建 Python 或 wheel，编译工作放在同版麒麟的联网准备机：准备支持 C11 的编译器、make、pkgconfig、patch、perl 及对应 zlib / bzip2 / xz / libffi / OpenSSL / readline / sqlite / ncurses / libuuid 的 devel 包；原生 wheel 需要的 C++ / Rust 工具链也在准备机备齐。将最终运行时和运行库打包，目标机不临时联网编译。若无法准备能在目标 glibc 上安装的完整依赖闭包，将该发行方案标为不通过；调整构建 / 版本组合并在同版麒麟重新验证后才能交付。
 
 ### 2.2 全部容器镜像
 
@@ -88,13 +119,15 @@ WSL 可在准备机导出专门的干净发行版，再用 `wsl --import LLM-Off
 
 | 文件 / 组件 | 固定直接依赖 | 用途 |
 | --- | --- | --- |
-| `requirements-observability.txt` | `litellm[proxy]==1.106.6`、`langfuse==4.18.0`、`prometheus-client==0.26.0`、`opentelemetry-exporter-otlp-proto-http==1.45.2`、`PyYAML==6.0.3`、`python-dotenv==1.2.4` | WSL / 宿主 venv、部署与验收脚本、工具示例 |
+| `requirements-observability.txt` | `litellm[proxy]==1.106.6`、`langfuse==4.18.0`、`prometheus-client==0.26.0`、`opentelemetry-exporter-otlp-proto-http==1.45.2`、`PyYAML==6.0.3`、`python-dotenv==1.2.4` | 独立宿主 venv、验收脚本、工具示例；版本源自 WSL，须在麒麟重新解析 / 安装验证 |
 | `requirements-callback.txt` | Prometheus client 0.26.0、OTEL API / SDK / OTLP HTTP exporter 1.45.2 | 检查 / 补齐所选 LiteLLM 容器内自定义回调依赖，不覆盖该容器的 LiteLLM 版本 |
 | `requirements.lock.txt` | 准备机空 venv 无网安装后 `pip freeze` 得到的**完整传递依赖精确版本** | 包括实际解析出的 SDK、HTTP、protobuf、模型 / tokenizer、Proxy 等依赖，不能仅带上面几个顶层 wheel |
 | `wheelhouse/*.whl` | 锁文件的全部 wheel，以及 pip / setuptools / wheel 的离线安装工具 | 对应 CPython 3.12、CPU 架构与 libc；glibc wheel 不等于 Alpine musl wheel |
 | Tokenizer 缓存 | 实际模型和 LiteLLM 代码路径需要的 tiktoken / Hugging Face 文件 | 在准备机预热实际编码器，并保留缓存路径；禁止首次请求再上网下载 |
 | 价格表 | LiteLLM 内置价格表 | `LITELLM_LOCAL_MODEL_COST_MAP=True`；本地模型成本另配真实价格，不从公网取表 |
 | 前端与插件 | Langfuse / Grafana 镜像内已构建资源、实际需要的 Grafana 插件 zip / 解压目录 | 不在目标机 npm install / yarn / 在线插件安装；本看板仅依赖内置面板和 Prometheus 数据源 |
+
+如果现场 `getconf GNU_LIBC_VERSION` 为 2.17，宿主不能安装要求 `manylinux_2_28` / `manylinux_2_34` 的 wheel；如果现场为 2.28，也不能接受要求 2.34 的 wheel。CPython `cp312`、`abi3`、架构、glibc / musl、`GLIBCXX` 等限制需同时满足。在实际麒麟准备机用 `pip debug --verbose` 留存兼容 tag；不通过改 wheel 文件名、强行指定 `--platform` 或复制 Ubuntu venv 绕过检查。容器有自己的 libc，仍共享宿主内核；宿主 wheelhouse 与每种容器环境的 wheelhouse 分开锁定和验证。
 
 `litellm[proxy]` 的依赖不等于 PostgreSQL / Prisma 路径已离线准备好。本项目网关未使用 LiteLLM 自身数据库；WSL 启动会清除 `DATABASE_URL`。若要新增 LiteLLM 数据库功能，需要额外准备其 schema / Prisma 引擎、迁移与对应平台二进制，并重新验收，不能借用 Langfuse 的数据库配置直接启动。
 
@@ -119,7 +152,7 @@ WSL 可在准备机导出专门的干净发行版，再用 `wsl --import LLM-Off
 ## 3. 标准离线包结构
 
 ```text
-llm-offline-ubuntu24.04-amd64-py312/
+llm-offline-kylinv10-实际SP-Build-amd64-py312/
 ├── source.tar                       同一个 Git commit 的源码
 ├── images/images.tar                9 个核心镜像，另含实际新增组件
 ├── images.lock.json                 源 digest、image ID、架构、大小
@@ -127,8 +160,14 @@ llm-offline-ubuntu24.04-amd64-py312/
 ├── requirements.lock.txt            完整精确版本锁
 ├── wheelhouse/*.whl                 包括全部传递依赖和安装工具
 ├── cache/tokenizers/                宿主 / 容器实际使用的预热缓存
-├── host/README.md                   OS、架构、系统安装方式与既有依赖声明
-├── host/debs/ 或 rootfs/             新目标需要的完整系统物料
+├── host/README.md                   麒麟产品、SP / Build、内核、glibc、架构、安装路线
+├── host/rpms/                       同版麒麟的完整运行 RPM 闭包
+├── host/rpm-top-level.txt           选定顶层 RPM 的精确版本引用，每行一个
+├── host/rpm-lock.txt                全部 RPM 的精确 NEVRA；文件哈希见 manifest
+├── host/RPM-GPG-KEY-发行方           RPM 签名公钥，另记可信指纹；不是运行私钥
+├── host/compose/                    已验证的 Compose 插件与 LICENSE
+├── host/runtime/                    独立 Python / OpenSSL 或静态 Docker（采用时）
+├── host/config/                     systemd、Docker 配置合并、SELinux / 网络方案
 ├── models/README.md                 复用哪台内网服务，或权重 / 运行时路径与校验
 ├── models/weights/                  仅部署包承诺新装推理服务时必需
 ├── config/README.md                 拓扑、端口、配置合并与证书 / 密钥交付方式
@@ -138,13 +177,48 @@ llm-offline-ubuntu24.04-amd64-py312/
 └── SHA256SUMS                       含 manifest 自身的校验清单
 ```
 
-该结构的三个 README 是实质性交付声明：系统包是否齐全、模型是复用还是新装、IP / 证书如何配置。不能只建空 README 就标记物料完整。封包工具检查清单和哈希，不证明 deb / wheel 的依赖闭包或模型能加载；这些由下面的无网安装和运行验收证明。
+包名中的 SP / Build 与 amd64 需替换成实际环境，例如 aarch64 使用 arm64；不同 SP / 架构不共用系统包。该结构的三个 README 是实质性交付声明：系统包是否齐全、模型是复用还是新装、IP / 证书如何配置。不能只建空 README 就标记物料完整。封包工具检查清单和哈希，不证明 RPM / wheel 的依赖闭包、内核兼容或模型能加载；这些由下面的无网安装和运行验收证明。
 
 ## 4. 联网准备机操作
 
-以下在与目标平台一致的 **Linux / WSL** 运行。不要在 Windows Python 中直接下载 Linux wheel。用独立准备目录和 venv，不修改既有业务 venv。
+以下在与目标匹配的**联网麒麟 V10 准备机**运行，用独立目录和 venv。系统安装与服务配置步骤需要 root；镜像准备需要有 Docker 权限。`editor` 是现场文本编辑器的占位命令，可用已安装的 `vi` 替换。
 
-### 4.1 选版本、验证镜像、导出
+### 4.1 固定平台并准备完整 RPM 物料
+
+先按 2.1 采集信息、选定 Docker 组合和可用的独立 Python 3.12。在准备机安装其运行时后，设置下列变量。`KYLIN_BUILD` 必须填写实际值，镜像平台由本机架构映射，不使用 x86 模拟器代替 ARM 真机验收。
+
+```bash
+export KYLIN_BUILD=REPLACE_WITH_ACTUAL_SP_BUILD
+test "$KYLIN_BUILD" != REPLACE_WITH_ACTUAL_SP_BUILD || exit 1
+case "$(uname -m)" in
+  x86_64) export TARGET_PLATFORM=linux/amd64 BUNDLE_ARCH=amd64 ;;
+  aarch64) export TARGET_PLATFORM=linux/arm64 BUNDLE_ARCH=arm64 ;;
+  *) echo '当前架构需要单独适配，停止制作通用包' >&2; exit 1 ;;
+esac
+export BUNDLE="/srv/offline/llm-offline-kylinv10-${KYLIN_BUILD}-${BUNDLE_ARCH}-py312"
+export PYTHON312=/opt/llm-python/bin/python3.12
+"$PYTHON312" -c 'import sys, ssl, venv, sqlite3, bz2, lzma, ctypes; assert sys.version_info[:2] == (3, 12); print(sys.version); print(ssl.OPENSSL_VERSION)'
+mkdir -p "$BUNDLE/host/rpms" "$BUNDLE/host/compose" "$BUNDLE/host/runtime" "$BUNDLE/evidence"
+```
+
+在 `host/rpm-top-level.txt` 中写入本次选定的精确包版本引用，每行一个，无注释 / 空行，包含 Docker、Python 发行物与实际所需基础工具。不要把互斥的两套 Docker 都列进去。将自制 Python RPM 也加入待安装集合；若以 runtime tar 交付，则单独记录完整安装路径、运行库依赖和校验值。
+
+YUM 路线在准备机使用 `yumdownloader --resolve --alldeps` 下载包括已安装包在内的依赖。只启用与目标匹配、已核对签名的麒麟 / 经验证供应商源；仓库配置和元数据版本记录到证据中。工具版本不支持 `--alldeps` 时先解决完整闭包下载方式，不能悄悄省略。
+
+```bash
+mapfile -t RPM_TOP_LEVEL < "$BUNDLE/host/rpm-top-level.txt"
+test "${#RPM_TOP_LEVEL[@]}" -gt 0 || exit 1
+yumdownloader --resolve --alldeps --destdir "$BUNDLE/host/rpms" "${RPM_TOP_LEVEL[@]}"
+rpm -qp --qf '%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' \
+  "$BUNDLE"/host/rpms/*.rpm | sort > "$BUNDLE/host/rpm-lock.txt"
+rpm --checksig "$BUNDLE"/host/rpms/*.rpm > "$BUNDLE/evidence/rpm-signatures-preparation.txt"
+```
+
+实际采用 DNF 的 SP 可用 `dnf download --resolve --alldeps --destdir ...`，需先备好对应插件；不要混用另一发行版的仓库。在同版干净麒麟克隆机上按 5.1 禁用全部 repo 后安装，缺包即回准备机补齐。ISO 提供的基础包也要注明 ISO 版本并进入受控物料；仅复制 yum 缓存不算依赖闭包验证。
+
+Compose RPM 不可用时，可把经验证的插件放入 `host/compose/docker-compose`，目标安装到 `/usr/local/lib/docker/cli-plugins/docker-compose` 并设可执行权限。保留原插件与配置的回滚副本，使用真实 CLI 验证插件发现路径，不默认调用 Python 版 docker-compose V1。
+
+### 4.2 选版本、验证镜像、导出
 
 ```bash
 cd /源码/litellm-langfuse-monitoring
@@ -153,13 +227,13 @@ cp offline/images.example.env offline/images.local.env
 editor offline/images.local.env
 
 # 仅在联网准备阶段拉取。实际源如需镜像站，先确认 tag/digest 映射。
-python3 - <<'PY'
-import subprocess, sys
+"$PYTHON312" - <<'PY'
+import os, subprocess, sys
 from pathlib import Path
 sys.path.insert(0, "ops")
 from offline_bundle import image_env
 for image in image_env(Path("offline/images.local.env")).values():
-    subprocess.run(["docker", "pull", "--platform", "linux/amd64", image], check=True)
+    subprocess.run(["docker", "pull", "--platform", os.environ["TARGET_PLATFORM"], image], check=True)
 PY
 ```
 
@@ -185,20 +259,19 @@ docker run --rm --pull never --network none --entrypoint python \
 导出已在本地的镜像，工具**不会 pull**，缺镜像或架构不符直接失败：
 
 ```bash
-export BUNDLE=/srv/offline/llm-offline-ubuntu24.04-amd64-py312
-mkdir -p "$BUNDLE"
-python3 ops/offline_bundle.py images \
-  --images-env offline/images.local.env --platform linux/amd64 --bundle "$BUNDLE"
+"$PYTHON312" ops/offline_bundle.py images \
+  --images-env offline/images.local.env --platform "$TARGET_PLATFORM" --bundle "$BUNDLE"
 ```
 
-工具生成 `llm-offline/<service>:<image-ID前16位>-amd64` 本地别名，保存完整 image ID / 原 repo digest，并导出包含别名的 tar。这样避免 `docker save/load` 后 repo digest 引用未被保留而导致 Compose 尝试访问仓库；目标机仍须验证完整 image ID，不能只看 tag 存在。
+工具生成 `llm-offline/<service>:<image-ID前16位>-<架构>` 本地别名，保存完整 image ID / 原 repo digest，并导出包含别名的 tar。这样避免 `docker save/load` 后 repo digest 引用未被保留而导致 Compose 尝试访问仓库；目标机仍须验证完整 image ID，不能只看 tag 存在。ARM 目标必须为全部镜像找到原生 arm64 发行物；任何一个镜像不提供该架构就先解决发行物，不能用 `--platform linux/amd64` 当作适配完成。
 
-### 4.2 下载完整 wheelhouse 并进行空环境安装
+### 4.3 下载完整 wheelhouse 并进行空环境安装
 
 ```bash
 mkdir -p "$BUNDLE/wheelhouse" "$BUNDLE/evidence"
-python3.12 -m venv /srv/offline-build-venv
+"$PYTHON312" -m venv /srv/offline-build-venv
 PREP_PY=/srv/offline-build-venv/bin/python
+"$PREP_PY" -m pip debug --verbose > "$BUNDLE/evidence/pip-compatible-tags.txt"
 
 # 联网阶段允许获取包；only-binary 缺 wheel 就失败，不隐式带入源码构建。
 "$PREP_PY" -m pip download --only-binary=:all: \
@@ -213,7 +286,7 @@ PIP_DISABLE_PIP_VERSION_CHECK=1 "$PREP_PY" -m pip install \
 
 还需在无网 / 无 pip 缓存的克隆环境，按这个锁文件再安装一次并运行导入检查。若准备环境已经存在 `/srv/offline-build-venv`，改用新的空目录，避免已有包把缺 wheel 问题遮住。若必须从 sdist 构建，联网阶段先在匹配目标的编译环境构建 wheel，把结果及其全部依赖放入 wheelhouse；目标机不用编译器联网补包。
 
-### 4.3 预热 Tokenizer、模型与宿主物料
+### 4.4 预热 Tokenizer、模型与宿主物料
 
 ```bash
 mkdir -p "$BUNDLE/cache/tokenizers"
@@ -229,7 +302,7 @@ PY
 
 按 2.1 准备完整系统物料。若 GPU 服务也要新装，按 2.4 准备所有权重、运行时与驱动，并在断网条件验证模型加载；若复用，在 `models/README.md` 明确模型服务内网地址 / 版本 / ID、认证和负责人。联网准备机上的每一个额外下载动作都要进入物料清单，不能留给目标机首启。
 
-### 4.4 打包同一版源码并封包
+### 4.5 打包同一版源码并封包
 
 ```bash
 mkdir -p "$BUNDLE/host" "$BUNDLE/models" "$BUNDLE/config"
@@ -238,9 +311,9 @@ editor "$BUNDLE/host/README.md" "$BUNDLE/models/README.md" "$BUNDLE/config/READM
 git rev-parse HEAD > "$BUNDLE/config/source-revision.txt"
 git archive --format=tar -o "$BUNDLE/source.tar" HEAD
 
-python3 ops/offline_bundle.py seal \
-  --bundle "$BUNDLE" --platform linux/amd64 --python-version 3.12
-python3 ops/offline_bundle.py verify --bundle "$BUNDLE"
+"$PYTHON312" ops/offline_bundle.py seal \
+  --bundle "$BUNDLE" --platform "$TARGET_PLATFORM" --python-version 3.12
+"$PYTHON312" ops/offline_bundle.py verify --bundle "$BUNDLE"
 ```
 
 `git archive` 只包含已提交文件，打包前要求 Git 工作区干净且当前提交就是批准版本。封包后不要再改配置模板或增加包；如有改动重新封包。输出的 `checksum_file_sha256` 通过独立受控渠道记录，避免传输中清单与文件一起被错误替换。SHA-256 用于完整性检查，不等价于发布者数字签名。
@@ -251,34 +324,78 @@ python3 ops/offline_bundle.py verify --bundle "$BUNDLE"
 
 ### 5.1 先阻断外网，再导入和安装
 
-选择独立干净实验机 / WSL 发行版进行首次验收；不要清空当前生产 Docker、pip 缓存或数据卷来模拟“干净”。外网出口从冷安装开始就阻断，只允许部署矩阵中的内网地址、DNS、NTP 和管理通道。Docker 发布端口与出站策略可能绕过主机 ufw，需以实际 Docker 网桥 / 上游网络策略为准。
+选择同产品、同 SP / Build、同架构的独立干净麒麟实验机进行首次验收；不要清空当前生产 Docker、pip 缓存或数据卷来模拟“干净”。外网出口从冷安装开始就阻断，只允许部署矩阵中的内网地址、DNS、NTP 和管理通道。Docker 发布端口与转发规则不一定受普通 firewalld INPUT 规则约束，需以实际 Docker 网桥 / 上游网络策略为准。
 
 留存出口 ACL / 路由、测试时间、内网白名单与外网拒绝日志。单独 curl 几个公网域名失败，不足以证明完全隔离；由网络策略和请求审计共同证明。不要把 Docker backend 直接设为 `internal: true` 后还期待它能访问外部 GPU VM；应按内网访问需求实施出口策略。
 
 ```bash
-export BUNDLE=/介质/llm-offline-ubuntu24.04-amd64-py312
-# 先使用已离线安装的 python3 校验；不需要 PyYAML、dotenv 或网络。
-python3 /可信交付目录/ops/offline_bundle.py verify --bundle "$BUNDLE" \
-  --report /var/tmp/offline-artifacts-before-load.json
+export BUNDLE=/介质/llm-offline-kylinv10-实际SP-Build-amd64-py312
 cd "$BUNDLE"
+sha256sum SHA256SUMS
+# 先与独立受控渠道的摘要核对一致，再检查下面的全部文件。
 sha256sum -c SHA256SUMS
-docker load -i images/images.tar
-python3 /可信交付目录/ops/offline_bundle.py verify --bundle "$BUNDLE" \
+```
+
+基础系统已具备 coreutils / RPM / YUM。核对随包公钥与受控渠道指纹一致后，导入对应 RPM 签名公钥，逐个验证 RPM 签名。包清单若带多家发行方，所有公钥均需核对。以下是现场安装示例，先审查事务内容，不能忽略 NOKEY / BAD 签名或依赖错误：
+
+```bash
+rpm --import "$BUNDLE"/host/RPM-GPG-KEY-*
+rpm --checksig "$BUNDLE"/host/rpms/*.rpm
+yum --noplugins --disablerepo='*' --setopt=localpkg_gpgcheck=1 \
+  localinstall "$BUNDLE"/host/rpms/*.rpm
+```
+
+若现场是 DNF，则使用对应 `dnf --noplugins --disablerepo='*' --setopt=localpkg_gpgcheck=1 install ...` 并按已验证事务执行。自制 RPM 也需签名并交付可信公钥。复用组件时不要重复安装 / 替换已有业务包；只安装在克隆机验证过的事务。采用 runtime tar / 静态 Docker 的发行包，还需按包内已验证的安装说明落盘、安装服务单元与依赖库；不能只执行 RPM 步骤就省略这些物料。
+
+完成 5.2 的内核、存储与安全策略检查后，启动 / 复用 Docker，再核对物料与导入镜像。校验工具需随可信交付目录预先提供，调用本次交付的独立 Python 3.12，**不是麒麟系统默认的 python / python3**；工具仅依赖标准库。上述路径不是下载地址，不能先联网 git clone 再开始“离线验收”。
+
+```bash
+export PYTHON312=/opt/llm-python/bin/python3.12
+"$PYTHON312" -c 'import sys, ssl, venv, sqlite3, bz2, lzma, ctypes; assert sys.version_info[:2] == (3, 12); print(ssl.OPENSSL_VERSION)'
+"$PYTHON312" /可信交付目录/ops/offline_bundle.py verify --bundle "$BUNDLE" \
+  --report /var/tmp/offline-artifacts-before-load.json
+docker load -i "$BUNDLE/images/images.tar"
+"$PYTHON312" /可信交付目录/ops/offline_bundle.py verify --bundle "$BUNDLE" \
   --loaded-images --report /var/tmp/offline-artifacts-after-load.json
 ```
 
-校验工具本身应随受控交付目录预先提供；首次解压源码前先以独立记录的 SHA256SUMS 摘要确认来源。上述路径不是联网下载地址，不能先 git clone 再开始“离线验收”。
-
-安装系统包 / 导入 rootfs 后，使用无索引方式安装验收 venv：
+使用无索引方式安装验收 venv，不能复制准备机的整个 venv：
 
 ```bash
-python3.12 -m venv /opt/llm-observability/.venv
+"$PYTHON312" -m venv /opt/llm-observability/.venv
 PIP_NO_INDEX=1 PIP_DISABLE_PIP_VERSION_CHECK=1 /opt/llm-observability/.venv/bin/python \
   -m pip install --no-index --find-links "$BUNDLE/wheelhouse" -r "$BUNDLE/requirements.lock.txt"
 /opt/llm-observability/.venv/bin/python -m pip check
 ```
 
-### 5.2 解压配置、生成现场密钥与证书
+### 5.2 麒麟宿主内核、Docker、存储和安全策略
+
+本节的宿主检查在导入镜像前完成；配置和挂载策略在 5.3 解压业务文件后应用。既有 Docker 正常时复用其配置，不覆盖 `/etc/docker/daemon.json` 或重启其业务容器。
+
+| 检查项 | 操作与通过标准 |
+| --- | --- |
+| 内核 / cgroup | 记录 `uname -r`、`stat -fc %T /sys/fs/cgroup`、`docker info` 的 Cgroup Driver / Version。按该麒麟 SP 和所选 Docker 组合验证，不盲目切换 cgroup v1 / v2；新镜像的线程 / syscall / seccomp 要真实运行通过 |
+| 存储驱动 | 在 `docker info` 确认实际 data-root、Storage Driver / snapshotter。采用 overlay2 时，核对其要求与 backing filesystem；XFS 用 `xfs_info` 检查 `ftype=1`，ext4 也需实测。不要在运行中的数据盘重建文件系统或直接改 driver；不满足时用独立已准备的磁盘 / 测试机 |
+| Docker 数据与日志 | 镜像导入空间、inode、数据库空间和日志轮转够用。合并配置保留原 data-root / storage / cgroup 设置；服务单元、配置、日志策略写入交付记录 |
+| 转发与内网 | `sysctl net.ipv4.ip_forward` 应符合 Docker bridge 转发要求；需要的 bridge / netfilter 能力由同版内核提供。容器 DNS、容器到 GPU VM / NTP / DNS 可达，外网出口仍受限 |
+| SELinux | 记录 `getenforce`。Enforcing 环境携带匹配的 container-selinux / policy，保持正常访问控制；为专用业务目录准备并验证持久标签或 Compose `:z` / `:Z`。共享目录用 `:z`，单容器私有目录才用 `:Z`，不要重标记整个 `/opt` / `/etc` 或关闭 SELinux 来代替适配 |
+| 挂载权限 | 本仓库的 data / certs / litellm 配置均为 bind mount。按所选镜像实际 UID/GID 设置，保留只读标志；不能用 `chmod 777` 掩盖 UID 或 SELinux AVC 拒绝 |
+| firewalld / iptables | 用 `firewall-cmd --get-active-zones`、`firewall-cmd --list-all` 和实际访问测试记录策略；仅开放部署矩阵内的源与端口。客户端 8443、管理端 8444、媒体 9443（启用时）、Prometheus 9401 / 9402 分别授权，数据库端口不对外发布。不因容器不通而停止 firewalld 或清空 iptables |
+| CA 与时间 | 把可信根证书安装到 `/etc/pki/ca-trust/source/anchors/`，执行 `update-ca-trust extract`，通过 `chronyc tracking` / `timedatectl` 核对内网时钟。宿主、浏览器和需要访问 HTTPS 的容器分别配置信任 |
+
+SELinux 持久标签方案示例，仅对**本次新建的专用目录**使用，并先确认已安装的策略含 `container_file_t`。`semanage` 所在包可能是 `policycoreutils-python` 或 `policycoreutils-python-utils`，在准备机按实际 SP 选定并打包：
+
+```bash
+# 在 5.3 创建专用目录后执行，不在现有共享数据目录上直接套用。
+semanage fcontext -a -t container_file_t '/opt/llm-gateway/(data|litellm|nginx)(/.*)?'
+restorecon -Rv /opt/llm-gateway/data /opt/llm-gateway/litellm /opt/llm-gateway/nginx
+```
+
+上述标签方式与经验证的 Compose `:z` / `:Z` 方案二选一，记录所用方案。已有 fcontext 规则时先检查和合并；不能忽略 `semanage` 的失败。容器拒绝读写时检查 `ausearch -m AVC -ts recent` 与实际 UID / 标签，不用 `--privileged`、关闭 seccomp 或 SELinux 作为正式验收条件。
+
+新装 Docker 在合并好配置后使用 `systemctl enable --now docker`；原有 Docker 仅检查状态。确认 `docker compose version`、实际配置的 `config -q` 和无网容器运行均通过。机器重启后以 systemd 自动恢复并保留上述标签 / 网络 / 存储配置，不能只在当前 shell 里临时设置。
+
+### 5.3 解压配置、生成现场密钥与证书
 
 ```bash
 mkdir -p /opt/llm-gateway
@@ -339,7 +456,7 @@ docker compose --env-file .env --env-file "$BUNDLE/images.env" config --images
 
 不要将完整 `docker compose config` 输出存入公开报告，它会展开密码；`config -q` 和 `config --images` 足以检查语法 / 镜像列表。若有本地 override，后续每条 Compose 命令都使用相同 `-f docker-compose.yml -f docker-compose.local.yml` 参数。
 
-### 5.3 启动 Langfuse、创建项目 Keys、加载网关
+### 5.4 启动 Langfuse、创建项目 Keys、加载网关
 
 ```bash
 docker compose --env-file .env --env-file "$BUNDLE/images.env" up -d --pull never --no-build
@@ -363,7 +480,7 @@ Nginx 当前使用静态 `proxy_pass` 主机名，重新创建网关后需 reloa
 
 检查 minio-init 退出码为 0、桶 `langfuse` 存在，PostgreSQL / Redis / ClickHouse 健康，Web / Worker 没有迁移或对象存储错误。迁移失败不能跳过健康检查继续称为成功。
 
-### 5.4 合并 Prometheus、导入 Grafana、部署补充 exporter
+### 5.5 合并 Prometheus、导入 Grafana、部署补充 exporter
 
 1. 在 VM-02 合并 [scrape 配置](../prometheus/litellm-scrape.yml)，保留 `job_name: litellm`；修改地址、认证文件、GPU deployment 标签，删除未部署的引擎 job。Strata 必须使用 `/metrics?format=prometheus`，默认 JSON 不能按 Prometheus 文本抓取。
 2. 把 `recording-rules.yml` 和 `alerts.yml` 放入已有规则目录，并在主配置 `rule_files` 中加入；不要只加载告警而漏掉 `llm:*` recording rule。
@@ -381,7 +498,7 @@ STRATA_EXPORTER_PORT=9402
 STRATA_POLL_INTERVAL=3
 ```
 
-systemd 的 ExecStart 使用目标 Python 的绝对路径和 exporter 源码绝对路径，EnvironmentFile 指向该私有文件。先以前台方式确认 9402 `/metrics` 中 `strata_extra_up=1`，再 enable 服务；不要原样运行本机路径固定的 `ops/deploy_wsl.py` 来覆盖多 VM 的现有配置。
+systemd 的 ExecStart 使用目标 venv Python 的绝对路径和 exporter 源码绝对路径，EnvironmentFile 指向该私有文件。麒麟上安装为经验证的系统级 service，指定运行用户、文件权限、network-online 依赖与重启策略，执行 `systemctl daemon-reload` / `systemctl enable --now 实际服务名`；不照搬 WSL 的 `systemctl --user`。先以前台方式确认 9402 `/metrics` 中 `strata_extra_up=1`，再 enable 服务；不要原样运行本机路径固定的 `ops/deploy_wsl.py` 来覆盖多 VM 的现有配置。
 
 **Grafana 公式离线可读**：每个面板的信息说明已包含公式 / 单位 / 实际 PromQL，另随包提供 [完整公式文档](grafana-formulas.md)。看板顶部 GitHub 链接在断网时不可访问，不影响面板与嵌入公式；需要文档入口时改为内部文档站。
 
@@ -391,7 +508,9 @@ systemd 的 ExecStart 使用目标 Python 的绝对路径和 exporter 源码绝�
 
 ### 6.1 包与系统
 
-- 目标机在开始安装前已禁止外网，内网白名单与出口日志有记录；使用的 OS / CPU / Python ABI / libc 与物料一致。
+- 目标机在开始安装前已禁止外网，内网白名单与出口日志有记录；实际麒麟产品 / SP / Build、内核 / CPU、Python ABI / libc 与物料和兼容矩阵一致。
+- 全部 RPM 签名与精确 NEVRA 已核对，禁用全部 YUM / DNF repo 后本地安装成功；系统 Python / YUM 仍可用，无强制安装与替换系统 glibc。
+- Docker / containerd / runc / Compose 在现场内核、seccomp、cgroup、存储驱动与 SELinux / firewalld 配置下运行通过，目录 UID/GID 与持久标签符合所选镜像。
 - `SHA256SUMS` 全部通过；加载后每个离线镜像的完整 image ID 和架构与锁文件一致。
 - 空 venv 仅用本地 wheel 安装成功，`pip check` 通过；Tokenizer 无网初始化成功；容器内回调无网加载通过。
 - 容器启动统一使用 `--pull never --no-build`，日志 / 网络审计没有成功访问外部仓库、PyPI、Tokenizer / 模型站点。
@@ -439,7 +558,7 @@ export GATEWAY_MODEL=qwen-strata
 
 ### 6.4 冷启动、持久化与恢复
 
-- 外网仍受限时重启测试主机 / WSL，确认 Docker / systemd 自动启动、模型可用、原有 Trace / 用户 / 仪表盘 / 数据不丢失；WSL 自动启动策略单独记录，不能把 Linux enable 当成 Windows 开机会自动启动 WSL。
+- 外网仍受限时重启麒麟测试主机，确认 Docker、系统级 exporter service、模型服务自动恢复，原有 Trace / 用户 / 仪表盘 / 数据不丢失；SELinux 标签、firewalld、Docker 存储 / cgroup、CA 信任与实际版本保持一致。
 - 用新的请求再次验证推理、Langfuse、Token / TTFT / TPOT、GPU、缓存和工具链；没有首次请求下载依赖的等待或外网回退。
 - 实验环境执行一致性备份 / 恢复，使用原镜像锁、配置和加密键；确认历史 Trace 可查、模型路由可用。
 - 记录包版本 / checksum 摘要、实际镜像 ID、平台、CA、内网拓扑、请求 / Trace ID、全部报告和人工页面检查结果，才可签署“完全离线部署通过”。
@@ -450,6 +569,10 @@ export GATEWAY_MODEL=qwen-strata
 
 | 阻断 | 处理与重新验收 |
 | --- | --- |
+| RPM 依赖 / 签名失败 | 核对麒麟产品 / SP / Build、NEVRA、架构、签名公钥与完整闭包；回同版准备机补齐，不强制安装其他 el 版本的包 |
+| Python 报 GLIBC / GLIBCXX / OpenSSL 不满足 | 按实际 glibc / C++ ABI 重建运行时或 wheel；Python 使用独立前缀，不升级替换系统 glibc / Python / OpenSSL |
+| 容器 syscall / seccomp / cgroup / illegal instruction 错误 | 检查宿主内核、CPU 指令集、Docker / containerd / runc 与镜像发行物兼容；先解决版本组合，在麒麟真机重新验收 |
+| 挂载 permission denied / XFS driver 失败 | 核对 UID/GID、SELinux AVC / 持久标签、XFS ftype 与存储 driver；不要关闭 SELinux 或原地格式化业务盘 |
 | 镜像 tag 存在但启动仍 pull | 统一使用生成的本地 images.env，完整 image ID 对比通过，所有 up 带 `--pull never --no-build` |
 | MinIO 报 sh 不存在 / 权限失败 | 发行版与 entrypoint 不兼容；联网准备机改为经过验证的镜像 / Compose，重新封包并冷装 |
 | 回调 import 缺 OTEL / Prometheus | 最终 LiteLLM 镜像未包含回调依赖；按其 Python / libc 构建，目标机不联网补包 |
@@ -466,6 +589,10 @@ export GATEWAY_MODEL=qwen-strata
 - [Langfuse Compose 部署](https://langfuse.com/self-hosting/deployment/docker-compose)
 - [Langfuse 官方 Compose](https://github.com/langfuse/langfuse/blob/main/docker-compose.yml)（必须取选定发布对应内容，不能把最新 main 当兼容性锁）
 - [LiteLLM Prometheus](https://docs.litellm.ai/docs/proxy/prometheus)
+- [Docker CentOS 安装与支持范围](https://docs.docker.com/engine/install/centos/)（麒麟版本需以发行商支持与实际测试为准）
+- [Docker overlay2 前提](https://docs.docker.com/engine/storage/drivers/overlayfs-driver/)
+- [Python 3.12 构建依赖](https://docs.python.org/3.12/using/configure.html#build-requirements)
+- [manylinux 与 glibc 兼容规范（PEP 600）](https://peps.python.org/pep-0600/)
 - [本仓库的实际配置修复与边界](observability-findings.md)
 
-**发布状态：本手册、物料锁定 / 校验工具和验收流程已提供；完整离线物料制作与干净断网机全链路验收仍需按本手册执行并保存记录。**
+**发布状态：麒麟 V10 的物料准备、RPM 安装、兼容门槛和验收流程已列明；具体 SP / Build / 架构的兼容矩阵、完整离线物料制作与干净麒麟断网机全链路验收尚待执行并保存记录。**

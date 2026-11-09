@@ -1,6 +1,8 @@
 # LiteLLM / Langfuse / Strata 推理观测
 
-Windows + Ubuntu 24.04 WSL 的运行配置、Grafana 看板和 Langfuse 工具链路示例。2026-11-09 已复用本机现有服务完成真实推理、指标抓取和工具执行链路验证。
+LiteLLM 网关、Grafana 推理指标和 Langfuse 工具链路配置。**离线部署目标为麒麟 V10 服务器（RPM / YUM 环境）**，安装物料与验收步骤见[离线手册](docs/offline-deployment-baseline.md)。
+
+2026-11-09 已在 Windows + Ubuntu 24.04 WSL 复用本机现有服务，完成真实推理、指标抓取和工具执行链路验证；麒麟目标环境需按手册单独准备物料与验收。
 
 本次复用既有 LiteLLM 虚拟环境、Strata 推理服务、Grafana、Prometheus、Langfuse 及其数据库和数据卷。新增一个轻量 Strata JSON 指标导出器，并更新网关回调、抓取规则和看板。
 
@@ -86,8 +88,10 @@ tests/test_observability.py            流式语义、父子关联、异常和�
 
 ## 完全离线部署与验收
 
-[完全离线部署手册](docs/offline-deployment-baseline.md) 列出 9 个核心镜像、系统 / WSL 安装包、Python 完整 wheelhouse、Tokenizer 缓存、模型物料、配置、证书、准备与安装命令。`ops/offline_bundle.py` 从本地镜像导出锁定别名，生成全物料 SHA-256 清单，并在离线导入后核对完整 image ID / 架构；它不访问镜像仓库。
+[完全离线部署手册](docs/offline-deployment-baseline.md) 面向**麒麟 V10 服务器（类似 CentOS 7.9 的 RPM / YUM 环境）**，列出 9 个核心镜像、同产品 / SP / 架构的 RPM 依赖、独立 Python 3.12、完整 wheelhouse、Tokenizer / 模型物料和配置证书。包含禁用全部仓库的本地安装、SELinux / firewalld、存储 / cgroup / glibc 兼容与验收命令；Windows / WSL 仅保留为历史复用部署记录。
 
-最终以干净目标机从冷安装起禁止互联网出口、完成真实推理、Langfuse 工具链、51 面板 / 78 查询、重启持久化及备份恢复为准。用 [离线验收记录模板](docs/offline-acceptance-template.md) 保存分项证据。**本机复用环境通过不代表全新离线 Compose 已验收；完整物料制作与断网冷装验收待执行。**
+`ops/offline_bundle.py` 从本地镜像导出锁定别名，生成全物料 SHA-256 清单，并在离线导入后核对完整 image ID / 架构；它不访问镜像仓库。
+
+最终以干净麒麟目标机从冷安装起禁止互联网出口、完成真实推理、Langfuse 工具链、51 面板 / 78 查询、重启持久化及备份恢复为准。用 [离线验收记录模板](docs/offline-acceptance-template.md) 保存分项证据。**WSL 复用环境通过不代表麒麟已适配验收；具体 SP / Build / 架构的物料制作与断网冷装验收待执行。**
 
 当前网关回调按单 worker 验收；多 worker 的 Prometheus 聚合需要额外配置。vLLM / SGLang / DCGM 为预留兼容接入，本机没有部署这些目标。
