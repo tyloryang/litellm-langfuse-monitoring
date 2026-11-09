@@ -2,12 +2,14 @@
 
 验收日期：2026-11-09。源码位于 `E:\project\YOUR_PROJECT\litellm-langfuse-monitoring`，运行环境为 `Ubuntu-24.04`，用户为 `YOUR_USER`。以下路径对应本机；其他机器需要调整目录、容器名称和推理地址。
 
+后续已实际完成 5 个组件的 DDN 换源、容器重建、原数据比对和真实请求验收，见 [WSL 渡渡鸟换源记录](wsl-ddn-migration.md)。Langfuse Web / Worker、ClickHouse 和 MinIO 因对应版本未同步而保留原镜像；本页下述回调 / 看板部署脚本本身不负责容器换源。
+
 ## 已复用的组件
 
 | 组件 | 当前版本或服务 | WSL 内入口 |
 | --- | --- | --- |
 | LiteLLM | 1.106.6，用户服务 `litellm-gateway.service` | `127.0.0.1:4000` |
-| Strata | 既有服务 `strata-iq3-xxs-full-context.service` | `127.0.0.1:8080` |
+| Strata | 既有推理服务，本次保持运行 | `127.0.0.1:8080` |
 | Grafana | 13.3.0，`llm-observability-grafana` | `127.0.0.1:3002` |
 | Prometheus | `llm-observability-prometheus` | `127.0.0.1:9090` |
 | Langfuse | 4.73.0，既有 Web / Worker | `127.0.0.1:3001` |
@@ -117,7 +119,7 @@ wsl -d Ubuntu-24.04 -- systemctl --user start litellm-gateway.service strata-met
 
 新导出器已通过 `systemctl --user enable` 注册。Windows 重启后仍需要启动 WSL；本次不另建 Windows 计划任务。服务问题可在 WSL 中查看 `journalctl --user -u litellm-gateway.service -u strata-metrics-extra.service --since -10min`。日志可能包含业务消息，按需读取。
 
-原有 `~/.docker/cli-plugins/docker-compose` 是不完整下载，执行时段错误。本次备份旧文件并从 [Docker Compose 官方 v5.7.0 release](https://github.com/docker/compose/releases/tag/v5.7.0) 重新下载，核对官方 API 提供的大小和 SHA-256 后修复；现在 `docker compose version` 可用。复用部署本身不依赖 Compose 启停，也没有重新创建任何既有容器。
+原有 `~/.docker/cli-plugins/docker-compose` 是不完整下载，执行时段错误。初次复用部署备份旧文件并从 [Docker Compose 官方 v5.7.0 release](https://github.com/docker/compose/releases/tag/v5.7.0) 重新下载，核对官方 API 提供的大小和 SHA-256 后修复；现在 `docker compose version` 可用。回调 / 看板部署脚本不依赖 Compose 启停；后续 DDN 换源使用 Compose 重建了 5 个相关容器，详见独立记录。
 
 模板检查不加载运行密钥，使用示例环境变量并跳过服务 `.env` 展开：
 

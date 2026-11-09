@@ -2,6 +2,8 @@
 
 核查日期：2026-11-09。用途：在联网麒麟准备机从渡渡鸟镜像站获取发行物，完成依赖 / 运行验收后制作离线包。目标机导入 tar 并使用 `llm-offline/…` 本地别名，运行期间不访问 DDN 或其他公网仓库。
 
+本机 WSL 已另行完成 Prometheus、Grafana、PostgreSQL、Redis、Nginx 的同版本 DDN 换源及重建，数据保留和真实链路检查通过；Langfuse Web / Worker、ClickHouse、MinIO 仍保留原镜像。实际版本、缺失原因、独立 5 项清单及回退步骤见 [WSL 换源记录](wsl-ddn-migration.md)。下面的 9 项清单仍只用于新装准备，不覆盖已有数据。
+
 ## 实际地址与核查范围
 
 - 索引站：[docker.aityp.com](https://docker.aityp.com/)。它不是本项目的 Docker registry 地址。
@@ -55,6 +57,6 @@ bash ops/pull-from-ddn.sh offline/ddn-image-map.amd64.tsv linux/amd64
 
 arm64 必须向 API 显式传 `platform=linux/arm64` 并精确匹配 `source`，读取返回的真实 mirror，核对 registry config 的 `os/architecture`。不要假设 amd64 / arm64 共用 tag、仓库路径或 digest，也不要只改文件名。制作首行为 `# platform=linux/arm64` 的独立 TSV 及对应 images.local.env，再向拉取脚本传入新表和 `linux/arm64`；没有原生发行物的组件必须先解决物料，不能用 QEMU 的启动结果替代麒麟 ARM 实机验收。
 
-Prometheus / Grafana 默认复用既有服务。需要新装时，先选择与配置兼容的版本，再通过相同 API / manifest / config 流程获取 DDN 地址并加入自有映射表、images.local.env 和离线包。DCGM 另需匹配 NVIDIA 驱动 / Container Toolkit / GPU 架构。模板中这些可选 IMAGE 行仍为注释占位，不作为已验证的镜像；本次也未查询到 Grafana 13.3.0 的精确同步记录，不杜撰其 mirror。现有服务器可用版本不等于 DDN 已同步版本。
+Prometheus / Grafana 默认复用既有服务。需要新装时，先选择与配置兼容的版本，再通过相同 API / manifest / config 流程获取 DDN 地址并加入自有映射表、images.local.env 和离线包。DCGM 另需匹配 NVIDIA 驱动 / Container Toolkit / GPU 架构。模板中这些可选 IMAGE 行仍为注释占位。本次后续找到并在 WSL 验证了 Prometheus `v3.15.1` 和 Grafana `13.3.0-distroless`，完整 digest 见 [WSL 清单](../offline/ddn-runtime-wsl.amd64.tsv)；Grafana 普通 `13.3.0` tag 未查到同步记录，不能用 distroless 的结果推定其他变体存在。现有服务器可用版本不等于 DDN 已同步版本。
 
 **交付状态：9 个核心 DDN 镜像地址、manifest digest 和 amd64 元数据已核查；整套麒麟运行兼容性、完整镜像下载 / 离线封包与干净断网部署仍按主手册验收。**
