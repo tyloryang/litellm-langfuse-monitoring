@@ -499,3 +499,89 @@ docker compose exec nginx nginx -s reload
 ```
 
 **部署验收状态：** 本节为可操作的部署配置，尚未在实际 VM-01 上进行完整容器与 TLS 端到端验证。此前章节提到的 4000/3000 直连端口、`NEXTAUTH_URL` HTTP 地址，应以本节 Nginx 入口为准。
+
+
+## Prometheus / Grafana 监控指标、部署配置和告警（新增）
+
+VM-02、VM-03 已经存在，不再新建 Prometheus 或 Grafana 容器。仓库提供：
+
+- `prometheus/litellm-scrape.yml`：LiteLLM、vLLM、SGLang、DCGM 的 Scrape Job。
+- `prometheus/alerts.yml`：网关不可用、错误率、请求积压、KV Cache、GPU 温度告警。
+- `grafana/dashboards/litellm-gpu-overview.json`：16 个可导入的监控面板。
+
+### 1. VM-02：配置 Prometheus
+
+先在 VM-01 的 LiteLLM 容器确认 Metrics 接口：
+
+```bash
+docker compose exec litellm sh -c 'curl -fsS http://127.0.0.1:4000/metrics || true'
+# /metrics 默认可能需要 LiteLLM API Key；请用 Bearer Token 重试。
+```
+
+在 VM-02 中创建密钥文件（不要提交 Git）：
+
+```bash
+sudo install -d -m 700 /etc/prometheus/secrets
+sudo sh -c 'umask 077; cat > /etc/prometheus/secrets/litellm_metrics_token'
+# 粘贴有效的 LiteLLM Master Key 或具有指标权限的 Key，然后按 Ctrl-D
+sudo chmod 600 /etc/prometheus/secrets/litellm_metrics_token
+```
+
+将 `prometheus/litellm-scrape.yml` 的各 Job 追加到现有 `/etc/prometheus/prometheus.yml` 的 `scrape_configs:` 下，**不能直接把该片段当成完整 prometheus.yml**。如需 GPU/推理指标，先验证 GPU VM 的 `/metrics` 与 DCGM :9400 能够从 VM-02 访问。
+
+在已有 `prometheus.yml` 的顶层合并：
+
+```yaml
+rule_files:
+  - /etc/prometheus/rules/llm-alerts.yml
+```
+
+复制告警文件到 VM-02：
+
+```bash
+sudo mkdir -p /etc/prometheus/rules
+sudo cp prometheus/alerts.yml /etc/prometheus/rules/llm-alerts.yml
+promtool check rules /etc/prometheus/rules/llm-alerts.yml
+promtool check config /etc/prometheus/prometheus.yml
+```
+
+如果 Prometheus 是容器部署，请将密钥和告警规则文件映射进容器，并在容器内执行 `promtool`。重新加载时按现有部署方式发送 SIGHUP 或启用 `--web.enable-lifecycle` 后调用：
+
+```bash
+curl -X POST http://127.0.0.1:9090/-/reload
+```
+
+### 2. VM-03：导入 Grafana Dashboard
+
+打开 Grafana → Dashboards → New → Import → Upload JSON，选择 `grafana/dashboards/litellm-gpu-overview.json`，绑定已有 Prometheus 数据源并保存。该 JSON 包含：
+
+| 面板 | 监控指标 |
+|---|---|
+| 网关健康 | Target UP、QPS、错误率、并发请求 |
+| Token 与成本 | 输入/输出 Token 速率、24h 模型成本 |
+| IP 统计 | 24h 按 IP 请求数 Top20（不是按 IP Token） |
+| vLLM 推理性能 | TTFT P95、请求级 TPOT P95、KV Cache、运行请求 |
+| GPU | 利用率、显存、温度、功耗 |
+
+**指标口径：** `litellm_*_total` 是 Prometheus Counter 样本；不要查询 `_created`。TTFT/TPOT 的 vLLM Histogram 依赖当前引擎版本，SGLang、Strata 的对应指标需要在确认实际 Metrics 名称后补充。vLLM 的 ITL 不等同于请求级 TPOT。IP-Token 精确关联仍需 LiteLLM Callback + Langfuse 请求元数据，不能由 IP 请求排行榜代替。
+
+### 3. PromQL 验收
+
+```promql
+up{job="litellm"}
+sum(rate(litellm_proxy_total_requests_metric_total[5m]))
+sum by (requested_model) (rate(litellm_input_tokens_metric_total[5m]))
+sum by (requested_model) (rate(litellm_output_tokens_metric_total[5m]))
+topk(20, sum by (client_ip) (increase(litellm_proxy_total_requests_metric_total[24h])))
+DCGM_FI_DEV_GPU_UTIL
+{__name__="vllm:kv_cache_usage_perc"} * 100
+```
+
+### 4. 重要运维限制
+
+- `/metrics` 可能需要 LiteLLM Bearer Token，Nginx 9401 的 IP 白名单与防火墙只是第二道控制；在 VM-02 测试 `curl -H "Authorization: Bearer ..."`。
+- `prometheus/litellm-scrape.yml` 的 IP 地址是示例值，必须替换成真实 VM 地址。
+- 生产中应将告警规则挂载到已有 Prometheus，并配置已有 Alertmanager 的 receiver；本仓库不覆盖原有告警路由。
+- 告警阈值为初始建议值，需按模型、GPU、业务并发基线调优。
+- 现有 Dashboard 不保证所有面板立即有数据；只有实际暴露的指标才会出现。
+- 默认不会将 Client IP 或 Request ID 作为新的高基数 Prometheus 自定义标签。
