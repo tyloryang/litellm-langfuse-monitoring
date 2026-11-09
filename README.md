@@ -380,3 +380,122 @@ docker compose up -d --pull never
 3. **GPU / KV Cache**：GPU VM 运行 DCGM Exporter（需要 NVIDIA 驱动和容器 GPU 权限）；Prometheus 直接抓取 vLLM/SGLang 的 `/metrics`。Strata 先验证 `/metrics`，不存在时需定制 Exporter 或修改引擎埋点；LiteLLM 无法推断引擎内部 KV Cache。
 
 上述扩展属于实施清单，**本部署包尚未包含完整 Callback、流式拦截器和 Strata Exporter 的生产实现**。
+
+## Nginx 反向代理：离线安装、启动、配置与验证（新增）
+
+本项目已经将 Nginx 纳入同一 VM-01 Docker Compose，配置位于 `nginx/nginx.conf`。Nginx 为 **唯一对外 API 入口**：`https://VM01:8443/v1/...`；Langfuse UI：`https://VM01:8444`；Prometheus 从 VM-02 抓取 `http://VM01:9401/metrics`。LiteLLM:4000 与 Langfuse:3000 仅在 Docker 内网暴露，不能再按本文早期章节的直连 4000/3000 操作。生产优先使用内网 DNS、企业 CA 证书与标准 443 端口；示例 8443/8444 用于避免同一 IP 端口冲突。
+
+### 1. 离线镜像准备
+
+联网准备机（与目标机相同 CPU 架构）：
+
+```bash
+docker pull nginx:1.28-alpine
+docker save -o nginx-1.28-alpine.tar nginx:1.28-alpine
+sha256sum nginx-1.28-alpine.tar > nginx-1.28-alpine.tar.sha256
+```
+
+将 TAR 和校验文件通过受控方式传至 VM-01：
+
+```bash
+sha256sum -c nginx-1.28-alpine.tar.sha256
+docker load -i nginx-1.28-alpine.tar
+docker image inspect nginx:1.28-alpine --format '{{.Id}}'
+```
+
+其余镜像同样离线导入。正式生产请固定经验证的不可变 digest，避免使用浮动标签。
+
+### 2. 目录和 TLS 证书
+
+```bash
+cd /opt/llm-gateway
+mkdir -p nginx/certs data/nginx-logs
+chmod 700 nginx/certs
+# 最好从企业 CA 签发带 DNS/IP SAN 的证书，放到以下位置：
+# nginx/certs/server.crt
+# nginx/certs/server.key
+chmod 600 nginx/certs/server.key
+```
+
+没有企业 CA 时，以下命令仅用于内网测试（把 IP 改为 VM-01 的实际 IP）：
+
+```bash
+openssl req -x509 -nodes -newkey rsa:3072 -sha256 -days 30 \
+  -keyout nginx/certs/server.key -out nginx/certs/server.crt \
+  -subj "/CN=llm.internal" \
+  -addext "subjectAltName=DNS:llm.internal,IP:192.168.10.10"
+chmod 600 nginx/certs/server.key
+```
+
+测试证书不应替代正式 CA 证书。若以 IP 访问，证书必须包含该 IP 的 SAN。
+
+### 3. 启动与配置检查
+
+```bash
+cp -n .env.example .env
+# 编辑 .env，设置真实 HOST_IP、NGINX_IMAGE、密钥、镜像标签和 NEXTAUTH_URL
+docker compose config -q
+docker compose up -d postgres clickhouse redis minio minio-init
+docker compose up -d langfuse-worker langfuse-web litellm
+docker compose up -d nginx
+docker compose exec nginx nginx -t
+docker compose ps
+docker compose logs --tail=100 nginx
+```
+
+如果此前已有 LiteLLM/Langfuse 直连端口的客户端，先做好切换窗口与回滚计划。此 Compose 已取消宿主机 4000、3000 的端口发布。注意 Docker 端口发布可能绕过主机 ufw：应在上游防火墙/安全组只允许受信客户端访问 8443、管理员访问 8444、Prometheus VM-02 访问 9401；8080 仅用于 HTTP 跳转。MinIO 9090 只允许授权网段。
+
+### 4. 请求透传、流式响应和安全
+
+- `proxy_buffering off` 防止 SSE 流式输出被 Nginx 缓冲；`proxy_read_timeout 600s` 适配长生成。
+- `X-Request-ID` 使用 Nginx 生成的 `$request_id`；`X-Real-IP` 与 `X-Forwarded-For` 使用可信入口的 `$remote_addr`，覆盖客户端伪造的同名请求头。
+- 如果 Nginx 前面还有 LB，需要在 Nginx 中显式配置可信的 `set_real_ip_from` 与 `real_ip_header`，不能无条件信任外部 `X-Forwarded-For`。
+- 访问日志位于 `data/nginx-logs/access.log`，为 JSON 格式，包含 IP、Request ID、耗时、状态码；**日志本身不等于 IP-Token 关联已经完成**。关联仍需 LiteLLM 请求级 Callback 与相同 Request ID。
+- 默认按 IP 限速 `20r/s`，突发 `60`；应按真实并发调整，并关注共享 NAT 下多个用户使用同一 IP 的情况。
+- `/metrics` 单独使用 9401 端口，并以 Nginx `allow` 限制 Prometheus 源 IP。若 LiteLLM 版本要求 Metrics Bearer Token，需在 Prometheus 使用 `bearer_token_file`，不要在 Git 提交密钥。
+
+### 5. 验证命令
+
+```bash
+# 在 VM-01 上检查证书和反向代理（测试自签名证书时用 -k）
+curl -k -i https://192.168.10.10:8443/health/readiness
+curl -k -i https://192.168.10.10:8444/
+curl -k -sS https://192.168.10.10:8443/v1/models -H "Authorization: Bearer YOUR_KEY"
+# 在 VM-02 Prometheus 机器上执行：
+curl -i http://192.168.10.10:9401/metrics
+# 若返回 401，使用正确的 Metrics Bearer Token；若返回 403，检查 Nginx allow 与来源地址。
+# 在 VM-01 查看 Nginx 日志：
+docker compose logs --tail=100 nginx
+tail -f data/nginx-logs/access.log
+```
+
+验证流式响应：
+
+```bash
+curl -k -N https://192.168.10.10:8443/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"qwen-vllm","stream":true,"messages":[{"role":"user","content":"你好"}]}'
+```
+
+如使用正式 CA 证书，删除 `-k` 并通过系统信任链验证 TLS。
+
+### 6. 常见故障与回滚
+
+| 现象 | 检查项 |
+|---|---|
+| 502 Bad Gateway | `docker compose ps`、`docker compose logs litellm langfuse-web nginx`、Docker 网络 |
+| 504 / SSE 中断 | 推理引擎响应、`proxy_read_timeout`、客户端超时 |
+| 413 Request Entity Too Large | `client_max_body_size` |
+| 429 Too Many Requests | Nginx `limit_req` 和 LiteLLM 限流策略 |
+| Prometheus 403 | 9401 allow IP / 防火墙 / NAT |
+| Prometheus 401 | LiteLLM Metrics 鉴权 |
+| TLS 握手失败 | 证书 SAN、证书链、密钥权限、协议 |
+
+仅回滚 Nginx 配置时，先恢复上一个已验证的 `nginx/nginx.conf`，执行：
+
+```bash
+docker compose exec nginx nginx -t
+docker compose exec nginx nginx -s reload
+```
+
+**部署验收状态：** 本节为可操作的部署配置，尚未在实际 VM-01 上进行完整容器与 TLS 端到端验证。此前章节提到的 4000/3000 直连端口、`NEXTAUTH_URL` HTTP 地址，应以本节 Nginx 入口为准。
