@@ -6,7 +6,7 @@
 
 ## 架构拓扑图
 
-![LiteLLM、Langfuse、Prometheus、Grafana 与 GPU 推理集群拓扑图](assets/architecture-topology.png)
+![LiteLLM、Langfuse、Prometheus、Grafana 与 GPU 推理集群拓扑图](assets/architecture-topology.svg)
 
 > 拓扑图中的 IP/Token 逐请求关联、精确流式 TPOT、Strata KV Cache Exporter 属于待实现/验收能力，不代表当前 Compose 已自动实现。
 
@@ -380,17 +380,3 @@ docker compose up -d --pull never
 3. **GPU / KV Cache**：GPU VM 运行 DCGM Exporter（需要 NVIDIA 驱动和容器 GPU 权限）；Prometheus 直接抓取 vLLM/SGLang 的 `/metrics`。Strata 先验证 `/metrics`，不存在时需定制 Exporter 或修改引擎埋点；LiteLLM 无法推断引擎内部 KV Cache。
 
 上述扩展属于实施清单，**本部署包尚未包含完整 Callback、流式拦截器和 Strata Exporter 的生产实现**。
-
-## 渡渡鸟镜像源与离线镜像准备
-
-所有镜像统一优先通过 [渡渡鸟镜像同步站](https://docker.aityp.com/) 查询对应的**实际拉取地址**，在联网打包机拉取后重命名为 Compose 中的标准镜像名，再 `docker save`，传入离线 VM-01 使用 `docker load`。**不要直接把 `docker.aityp.com` 当成 Docker Registry 地址。**
-
-例如经站点确认映射后：
-
-```bash
-# 以下仅为站点公布过的路径格式示例，版本与可用性必须再次核对
-docker pull swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/postgres:17.11-alpine
-docker tag swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/postgres:17.11-alpine postgres:17.11-alpine
-```
-
-项目统一执行 `bash ops/pull-from-ddn.sh image-map.tsv`（先填写从渡渡鸟站点核对的镜像映射），随后 `docker compose --env-file .env config --images | sort -u | xargs docker save -o llm-images.tar`。离线机器执行 `docker load -i llm-images.tar` 和 `docker compose up -d --pull never`。对于未被渡渡鸟收录的镜像（尤其 Langfuse 官方专用镜像仓库和 NVIDIA NVCR），**不能凭空构造镜像地址**；必须先确认镜像确实可同步，或采用经验证的替代构建/内部镜像仓库流程。建议保存 SHA256 与镜像摘要，避免使用漂移的 `latest` 标签。
