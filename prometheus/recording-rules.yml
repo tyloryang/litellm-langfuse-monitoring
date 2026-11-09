@@ -1,0 +1,62 @@
+groups:
+  - name: llm-normalized
+    interval: 15s
+    rules:
+      - record: llm:gateway_requests_per_second
+        expr: sum by (requested_model) (rate(litellm_proxy_total_requests_metric_total[5m]))
+      - record: llm:gateway_input_tokens_per_second
+        expr: sum by (requested_model) (rate(litellm_input_tokens_metric_total[5m]))
+      - record: llm:gateway_output_tokens_per_second
+        expr: sum by (requested_model) (rate(litellm_output_tokens_metric_total[5m]))
+      - record: llm:engine_requests_running
+        expr: |
+          label_replace(vllm:num_requests_running{job=~"strata|vllm"}, "model", "$1", "model_name", "(.+)")
+          or label_replace(sglang:num_running_reqs{job="sglang"}, "model", "$1", "model_name", "(.+)")
+      - record: llm:engine_requests_waiting
+        expr: |
+          label_replace(vllm:num_requests_waiting{job=~"strata|vllm"}, "model", "$1", "model_name", "(.+)")
+          or label_replace(sglang:num_queue_reqs{job="sglang"}, "model", "$1", "model_name", "(.+)")
+      - record: llm:engine_input_tokens_per_second
+        expr: |
+          label_replace(rate(vllm:prompt_tokens_total{job=~"strata|vllm"}[5m]), "model", "$1", "model_name", "(.+)")
+          or label_replace(rate(sglang:prompt_tokens_total{job="sglang"}[5m]), "model", "$1", "model_name", "(.+)")
+      - record: llm:engine_output_tokens_per_second
+        expr: |
+          label_replace(rate(vllm:generation_tokens_total{job=~"strata|vllm"}[5m]), "model", "$1", "model_name", "(.+)")
+          or label_replace(rate(sglang:generation_tokens_total{job="sglang"}[5m]), "model", "$1", "model_name", "(.+)")
+      - record: llm:engine_ttft_seconds_bucket
+        expr: |
+          label_replace(vllm:time_to_first_token_seconds_bucket{job=~"strata|vllm"}, "model", "$1", "model_name", "(.+)")
+          or label_replace(sglang:time_to_first_token_seconds_bucket{job="sglang"}, "model", "$1", "model_name", "(.+)")
+      - record: llm:engine_itl_seconds_bucket
+        expr: |
+          label_replace(vllm:inter_token_latency_seconds_bucket{job=~"strata|vllm"}, "model", "$1", "model_name", "(.+)")
+          or label_replace(sglang:inter_token_latency_seconds_bucket{job="sglang"}, "model", "$1", "model_name", "(.+)")
+      - record: llm:engine_kv_usage_ratio
+        expr: |
+          label_replace(vllm:kv_cache_usage_perc{job="vllm"}, "model", "$1", "model_name", "(.+)")
+          or label_replace(sglang:token_usage{job="sglang"}, "model", "$1", "model_name", "(.+)")
+      # Strata's vllm:kv_cache_usage_perc is context occupancy, not physical KV
+      # allocation. Keep it in a separate series and explicitly labelled panel.
+      - record: llm:strata_context_usage_ratio
+        expr: label_replace(vllm:kv_cache_usage_perc{job="strata"}, "model", "$1", "model_name", "(.+)")
+      - record: llm:gpu_utilization_percent
+        expr: |
+          max by (deployment, gpu) (strata:gpu_util{job="strata"})
+          or max by (deployment, gpu) (DCGM_FI_DEV_GPU_UTIL{job="gpu-dcgm"})
+      - record: llm:gpu_memory_used_bytes
+        expr: |
+          max by (deployment, gpu) (strata:gpu_mem_used_bytes{job="strata"})
+          or max by (deployment, gpu) (DCGM_FI_DEV_FB_USED{job="gpu-dcgm"} * 1048576)
+      - record: llm:gpu_memory_total_bytes
+        expr: |
+          max by (deployment, gpu) (strata:gpu_mem_total_bytes{job="strata"})
+          or max by (deployment, gpu) ((DCGM_FI_DEV_FB_USED{job="gpu-dcgm"} + DCGM_FI_DEV_FB_FREE{job="gpu-dcgm"}) * 1048576)
+      - record: llm:gpu_temperature_celsius
+        expr: |
+          max by (deployment, gpu) (strata:gpu_temp_celsius{job="strata"})
+          or max by (deployment, gpu) (DCGM_FI_DEV_GPU_TEMP{job="gpu-dcgm"})
+      - record: llm:gpu_power_watts
+        expr: |
+          max by (deployment, gpu) (strata:gpu_power_watts{job="strata"})
+          or max by (deployment, gpu) (DCGM_FI_DEV_POWER_USAGE{job="gpu-dcgm"})

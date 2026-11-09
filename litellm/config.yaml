@@ -17,7 +17,7 @@ model_list:
 litellm_settings:
   callbacks:
     - prometheus
-    - langfuse_otel
+    - observability_callback.observability
   prometheus_emit_stream_label: true
   prometheus_metrics_max_series_per_metric: 5000
 general_settings:

@@ -118,7 +118,9 @@ services:
     restart: unless-stopped
     depends_on: [langfuse-web]
     env_file: [.env]
-    volumes: ["./litellm/config.yaml:/app/config.yaml:ro"]
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/observability_callback.py:/app/observability_callback.py:ro
     command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
     expose: ["4000"]
     networks: [backend]

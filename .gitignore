@@ -5,3 +5,10 @@
 data/
 backups/
 __pycache__/
+.venv/
+.runtime/
+litellm/config.local.yaml
+litellm/run-local.sh
+nginx/nginx.local.conf
+nginx/certs/
+docker-compose.local.yml
