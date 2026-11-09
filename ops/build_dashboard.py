@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+from dashboard_formulas import REFERENCE_URL, panel_description, write_reference
+
 ROOT = Path(__file__).resolve().parents[1]
 DS = {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
 panels = []
@@ -71,6 +73,7 @@ def panel(title, expressions, unit="short", description="", kind="timeseries", w
                {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
                 "orientation": "auto", "textMode": "value_and_name", "colorMode": "value",
                 "graphMode": "area", "justifyMode": "auto"})
+    description = panel_description(title, unit, description, expressions)
     panels.append({"id": len(panels) + 1, "title": title, "description": description, "type": kind,
                    "gridPos": {"x": x, "y": y, "w": width, "h": height}, "datasource": DS,
                    "fieldConfig": {"defaults": default, "overrides": []}, "options": options,
@@ -101,7 +104,7 @@ band([
     ("解码速度 · 最近请求", f"strata:last_decode_tok_s{N}", "suffix:tok/s", "最近完成请求的引擎解码速度；空闲时保留最近值。"),
     ("GPU 利用率", f"llm:gpu_utilization_percent{H}", "percent", "来自 Strata 实际硬件采样；DCGM 部署可复用相同面板。"),
     ("显存占用率", f"100 * llm:gpu_memory_used_bytes{H} / llm:gpu_memory_total_bytes{H}", "percent", "驻留模型也占显存，空闲时显存通常不会清零。"),
-    ("最近 TTFT · 引擎", f"strata_extra_last_request_ttft_seconds{M}", "s", "引擎首次生成事件，和网关到达客户端的口径不同。"),
+    ("最近 TTFT · 引擎", f"strata_extra_last_request_ttft_seconds{M}", "s", "引擎队列到原始首 Token；区别于服务 histogram 和网关迭代器的首输出标记。"),
     ("最近 TPOT · 引擎均值", f"strata_extra_last_request_engine_tpot_seconds{M}", "s", "decode_ms / 1000 / (output_tokens - 1)，包含推理 Token；不是逐 Token ITL。"),
 ], width=4, height=5, kind="stat")
 band([
@@ -164,7 +167,7 @@ band([
 row("06 · 采集健康、计费配置及其他引擎")
 band([
     ("采集目标 UP", 'up{job=~"litellm|strata|strata-extra|vllm|sglang|gpu-dcgm"}', "short", "0=采集异常；不存在的部署不会伪装成正常。"),
-    ("Strata JSON 采集健康 / 数据年龄", ["strata_extra_up", "time() - strata_extra_last_success_timestamp_seconds"], "short", "健康应为 1；数据年龄应小于两个轮询周期。"),
+    ("Strata JSON 采集健康 / 数据年龄", ["strata_extra_up", "time() - strata_extra_last_success_timestamp_seconds"], "short", "结合轮询间隔、HTTP 超时和抓取周期解释数据年龄。"),
     ("Langfuse 上报失败 / 本地构造错误", ['increase(llm_gateway_otel_exports_total{status="failure"}[$__range])', "increase(llm_gateway_observation_errors_total[$__range])"], "short", "分别追踪远程 OTLP HTTP 导出失败与本地构造错误；异步队列的超量丢弃需结合网关日志。"),
     ("未配置价格的请求", 'sum(increase(llm_gateway_unpriced_requests_total{model=~"$gateway_model"}[$__range]))', "short", "本地模型无官方单价时标为未配置。应先设置真实每 Token 成本，再解释费用为零。"),
     ("LiteLLM 费用 · USD", f"sum(increase(litellm_spend_metric_total{G}[$__range]))", "currencyUSD", "需要单独配置 LiteLLM model_info 的价格，未配置时 0 不代表免费。"),
@@ -179,10 +182,11 @@ def variable(name, label, query):
 
 
 dashboard = {"id": None, "uid": "litellm-gpu-overview", "title": "LLM 推理观测 · Strata / LiteLLM / GPU",
-             "description": "Strata Monitor 同源指标、网关 TTFT/TPOT、GPU、缓存与 Langfuse 数据质量。详见各面板说明。",
+             "description": "全部 51 个指标面板均标注计算公式、单位、统计窗口和实际 PromQL；点击面板信息图标，或顶部公式文档入口查看。",
              "tags": ["LLM", "Strata", "LiteLLM", "GPU", "Langfuse"], "timezone": "browser", "schemaVersion": 39,
-             "version": 2, "editable": True, "graphTooltip": 1, "refresh": "10s", "time": {"from": "now-1h", "to": "now"},
-             "annotations": {"list": []}, "links": [], "panels": panels,
+             "version": 3, "editable": True, "graphTooltip": 1, "refresh": "10s", "time": {"from": "now-1h", "to": "now"},
+             "annotations": {"list": []}, "links": [{"type": "link", "title": "计算公式与指标口径（51 面板）",
+                 "url": REFERENCE_URL, "targetBlank": True, "icon": "doc", "includeVars": False, "keepTime": False}], "panels": panels,
              "templating": {"list": [{"name": "DS_PROMETHEUS", "label": "数据源", "type": "datasource", "query": "prometheus",
                                       "current": {}, "options": [], "refresh": 1},
                                      variable("gateway_model", "网关模型", "label_values(litellm_proxy_total_requests_metric_total, requested_model)"),
@@ -193,4 +197,6 @@ dashboard = {"id": None, "uid": "litellm-gpu-overview", "title": "LLM 推理观�
 if __name__ == "__main__":
     output = ROOT / "grafana/dashboards/litellm-gpu-overview.json"
     output.write_text(json.dumps(dashboard, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    reference = write_reference(ROOT, dashboard)
     print(f"Generated {len([p for p in panels if p['type'] != 'row'])} panels: {output}")
+    print(f"Generated formula reference: {reference}")
