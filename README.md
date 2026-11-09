@@ -84,4 +84,10 @@ examples/traced_tool_agent.py          真实客户端工具链路
 tests/test_observability.py            流式语义、父子关联、异常和采样测试
 ```
 
-当前网关回调按单 worker 验收；多 worker 的 Prometheus 聚合需要额外配置。vLLM / SGLang / DCGM 为预留兼容接入，本机没有部署这些目标。仓库中的 [离线多 VM 基线](docs/offline-deployment-baseline.md) 保留作参考，全新 Compose 部署没有在本次复用环境中验收。
+## 完全离线部署与验收
+
+[完全离线部署手册](docs/offline-deployment-baseline.md) 列出 9 个核心镜像、系统 / WSL 安装包、Python 完整 wheelhouse、Tokenizer 缓存、模型物料、配置、证书、准备与安装命令。`ops/offline_bundle.py` 从本地镜像导出锁定别名，生成全物料 SHA-256 清单，并在离线导入后核对完整 image ID / 架构；它不访问镜像仓库。
+
+最终以干净目标机从冷安装起禁止互联网出口、完成真实推理、Langfuse 工具链、51 面板 / 78 查询、重启持久化及备份恢复为准。用 [离线验收记录模板](docs/offline-acceptance-template.md) 保存分项证据。**本机复用环境通过不代表全新离线 Compose 已验收；完整物料制作与断网冷装验收待执行。**
+
+当前网关回调按单 worker 验收；多 worker 的 Prometheus 聚合需要额外配置。vLLM / SGLang / DCGM 为预留兼容接入，本机没有部署这些目标。

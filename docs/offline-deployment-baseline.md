@@ -1,591 +1,471 @@
-# LiteLLM + Langfuse 完全离线部署与运维手册
+# 完全离线部署：物料、准备、实施与验收
 
-> 这是保留的多 VM 离线部署基线，包含旧回调配置和示例地址。本次已验收的 Windows / WSL 复用部署见 [Windows WSL 部署](windows-wsl.md)，新回调与指标口径见 [观测调查报告](observability-findings.md)。此基线没有经过全新 Compose 容器端到端验收，不能用它的“待实现”描述判断当前 WSL 运行状态。
+更新日期：2026-11-09。目标基线：Ubuntu 24.04、Linux amd64、Python 3.12；Windows 使用 WSL2。arm64 必须单独准备镜像、wheel、系统包和模型运行时，不混用 amd64 的包。
 
-版本：2026-11-09 / 单机网关与观测节点部署基线
+**交付验收以“干净目标机在禁止互联网出口、允许部署内网通信时，完成冷安装、真实推理、Trace / 工具链与 Grafana 展示”为准。文件校验通过、Compose 语法通过和容器启动都只是中间步骤。**
 
-状态：**配置已通过 YAML 语法检查，尚未执行容器端到端验证**。生产实施前须按本文的版本与兼容性检查清单验收。
+目前已完成的是既有 WSL 环境的真实链路验收；尚未制作并交付一套完整的离线物料，也尚未在干净断网机完成全新 Compose 验收。下表和末尾验收记录用于后续逐项收口，不将复用部署结果当作新装成功。
 
-适用：VM-01 运行 LiteLLM + Langfuse；VM-02 已有 Prometheus；VM-03 已有 Grafana；后端 GPU VM 已运行 vLLM/SGLang/Strata。
+| 范围 | 当前证据 | 后续发布门槛 |
+| --- | --- | --- |
+| WSL 复用部署 | LiteLLM 1.106.6、Langfuse 4.73.0、真实 Strata 推理与工具链已验证 | 断网条件下重新检查并记录证据 |
+| 看板 | 51 指标面板、78 查询、16 recording rule、9 告警已验证 | 目标 Prometheus / Grafana 配置与在线数据复核 |
+| Python | 直接依赖版本已列明 | 生成该目标平台的完整传递依赖锁与 wheelhouse，在空 venv 无网安装成功 |
+| 镜像 | 当前运行镜像可作为版本取证参考 | 选定全部 9 个兼容镜像、检查回调依赖和 MinIO shell 后锁 image ID 并导出 |
+| 全新离线部署 | **待验收** | 断网冷安装、冷启动、重启与持久化、回滚均通过 |
 
-## 架构拓扑图
+## 1. 部署范围与固定入口
 
-![LiteLLM、Langfuse、Prometheus、Grafana 与 GPU 推理集群拓扑图](../assets/architecture-topology.svg)
+默认复用现有 VM-02 Prometheus、VM-03 Grafana 和 GPU 推理服务；VM-01 新装网关与 Langfuse。完全离线允许这些机器在内网通信，不允许访问 GitHub、镜像仓库、PyPI、Hugging Face、模型下载站或外部认证服务。
 
-> 拓扑图中的 IP/Token 逐请求关联、精确流式 TPOT、Strata KV Cache Exporter 属于待实现/验收能力，不代表当前 Compose 已自动实现。
-
-## 1. 架构与边界
-
-```text
-Client --(4000)--> VM-01 LiteLLM ----> GPU VM A /v1 (vLLM)
-                       |          \--> GPU VM B /v1 (SGLang)
-                       |           \-> GPU VM C /v1 (Strata)
-                       +--> Langfuse Web/Worker -> PostgreSQL/ClickHouse/Redis/MinIO
-                       +-- /metrics --> VM-02 Prometheus --> VM-03 Grafana
-```
-
-不部署 OpenTelemetry Collector、Tempo、Loki、独立 ClickHouse 分析平台。ClickHouse 是 Langfuse v4 内部必需依赖。**不承诺**只靠 LiteLLM 获取 GPU 物理利用率、显存或 KV Cache；这类指标必须从 GPU VM/推理引擎采集。Client IP 与逐请求 Token 关联、TPOT 的准确采集也需要按版本验收或追加自定义回调。
-
-## 2. 资源和网络规划
-
-| 主机 | 示例 IP | 组件 | 建议 |
-|---|---|---|---|
-| VM-01 | 192.168.10.10 | LiteLLM + Langfuse 全栈 | 16 vCPU、48-64GiB、300GiB SSD 起 |
-| VM-02 | 192.168.10.20 | Prometheus 已有 | 只改 scrape job |
-| VM-03 | 192.168.10.30 | Grafana 已有 | 复用现有数据源 |
-| GPU VM | 10.0.0.11-13 | 推理引擎 | 保持现状 |
-
-防火墙：客户端→VM-01:4000；管理员→VM-01:3000；Prometheus→VM-01:4000（或经验证的独立 Metrics 端口）；VM-01→GPU VM 推理端口。MinIO 的 9090 映射到对象 API，仅允许管理网段访问（需要在浏览器访问 Langfuse 媒体资源时使用）；禁止公网访问。数据库、Redis、ClickHouse 不映射主机端口。
-
-**安全注意**：Docker 端口发布可能绕过 ufw；必须在上游防火墙/安全组限制。建议生产中以 TLS 反向代理暴露 4000、3000、9090，随后取消不必要的主机直连端口。本文使用内网 HTTP 作为最小可操作基线。
-
-## 3. 目录结构
+VM-01 可按 16 vCPU、48–64 GiB RAM、300 GiB SSD 起步规划，再根据保留时间与吞吐调整。磁盘预算同时包含镜像 tar、导入层、数据库 / 对象数据、备份和临时空间，模型权重另算。还需核对选定镜像的 CPU 指令集最低要求；架构同为 amd64 不代表所有旧 CPU 都能运行同一 ClickHouse / 推理二进制。
 
 ```text
-/opt/llm-gateway/
-├── docker-compose.yml
-├── .env
-├── litellm/config.yaml
-├── prometheus/litellm-scrape.yml
-├── ops/check.sh
-└── data/{postgres,clickhouse,clickhouse-logs,redis,minio}/
+客户端 ── HTTPS :8443 ── Nginx ── LiteLLM :4000 ── 内网推理引擎 /v1
+管理员 ── HTTPS :8444 ── Nginx ── Langfuse Web :3000
+                                      │ Worker / PostgreSQL / ClickHouse / Redis / MinIO
+VM-02 Prometheus ── HTTP :9401 /metrics ── Nginx ── LiteLLM
+                 └─ GPU VM 原生指标 / Strata JSON exporter :9402
+VM-03 Grafana ── 已有 Prometheus 数据源 ── 51 面板
 ```
 
-下载包已包含上述配置模板。以下命令均以 VM-01 为执行环境，除非标明 VM-02/VM-03。
+| 访问方向 | 目标 | 配置位置 / 要求 |
+| --- | --- | --- |
+| 客户端 → VM-01 | `https://VM01:8443/v1` | Nginx TLS、Master / Virtual Key；宿主机不发布 4000 |
+| 管理员 → VM-01 | `https://VM01:8444` | `NEXTAUTH_URL` 必须与此入口一致；宿主机不发布 3000 |
+| Prometheus → VM-01 | `http://VM01:9401/metrics` | Nginx 修改 `allow` 为真实 Prometheus 来源 IP，并携带指标 Bearer Token |
+| 浏览器 → MinIO | 对象存储的实际 HTTPS 入口 | `LANGFUSE_MEDIA_PUBLIC_ENDPOINT` 与实际可达地址一致；9090 HTTP 仅用于内网 API / 排障，HTTPS UI 的媒体访问需避免混合内容 |
+| VM-01 → GPU VM | 模型 `/v1/models`、`/v1/chat/completions` | `litellm/config.yaml` 中路由、模型 ID、Key 必须对应目标环境 |
+| Prometheus → GPU VM | 原生 `/metrics`、Strata `?format=prometheus`、补充导出器 9402 | 认证文件挂入 Prometheus；仅保留真实部署的 jobs |
+| 内部依赖 | PostgreSQL 5432、ClickHouse 8123/9000、Redis 6379、MinIO 9000 | Compose backend 网络，默认不发布数据库端口 |
 
-## 4. 在联网的中转机准备离线镜像
+旧版手册中 4000 / 3000 的宿主机直连命令已被上述 Nginx 入口替代。本机既有 WSL 的 4000 / 3001 / 3002 是另一套复用布局，见 [Windows / WSL 说明](windows-wsl.md)，不要混用两套端口。
 
-**先固定兼容版本，再打包。** `.env.example` 中 `REPLACE_TESTED_TAG` 为刻意保留的占位符，不允许原样上线；`langfuse:4` 也是浮动大版本标签，正式部署必须替换成测试过的具体版本或 digest。Docker Compose 配置中包括以下镜像：
+## 2. 必须准备的物料清单
 
-- PostgreSQL：`postgres:17`
-- ClickHouse：`clickhouse/clickhouse-server:24.8`（仅示例基线，须验证 Langfuse 版本兼容性）
-- Redis：`redis:7.4`
-- MinIO：`minio/minio:<固定标签>`
-- MinIO Client：`minio/mc:<固定标签>`
-- Langfuse Web：`docker.langfuse.com/langfuse/langfuse:<固定版本>`
-- Langfuse Worker：`docker.langfuse.com/langfuse/langfuse-worker:<同版本>`
-- LiteLLM：`ghcr.io/berriai/litellm:<固定版本>`
+### 2.1 系统、Docker 和 Windows / WSL
 
-在联网机器将已确认的镜像标签写入 `.env` 后：
+| 物料 | 必须包含 | 验证方法 |
+| --- | --- | --- |
+| Linux 基础系统 | 相同发行版 / 架构的安装介质或干净 rootfs，记录 `/etc/os-release` | 目标机 OS、架构和 glibc 与准备机一致 |
+| Windows / WSL（仅 Windows） | 支持 WSL2 的 Windows、WSL 离线安装包 / 内核、Ubuntu rootfs tar；提前启用虚拟化与相关功能 | 不依赖 Microsoft Store；`wsl --version`、`wsl -l -v`；必要重启已完成 |
+| Docker Engine | 选定的一套包：Ubuntu 的 `docker.io` + `containerd` + `runc`，或官方 `docker-ce` / `docker-ce-cli` / `containerd.io`；含完整系统依赖 | 不混装两套；`docker version`、`docker info`；daemon 可启动 |
+| Docker 静态发行版（若选此方式） | 完整官方 tar 中的 daemon、CLI、containerd、shim、runc、docker-proxy、docker-init 和 systemd 单元 | 不能只拷贝一个 `docker` CLI；保留发行版本与校验值 |
+| Compose 插件 | 对应架构的完整 `docker-compose` 二进制或发行版插件包 | `docker compose version`；可执行权限与文件 SHA-256 正确 |
+| Python | `python3.12`、`python3.12-venv` / ensurepip、pip 及其系统依赖 | 空 venv 能创建，离线安装并执行 `pip check` |
+| 基础工具 | `ca-certificates`、`openssl`、`curl`、`tar`、`gzip`、`coreutils`、`iproute2`、防火墙 / iptables 相关依赖；NTP 内网源 / 时区配置 | CA、SAN、时钟、磁盘与网络可验证；不在目标机运行在线 apt update |
+| 运维工具 | `promtool` 随现有 Prometheus / 镜像提供；Git 仅准备机打包需要 | 目标机使用源码 tar 即可，不要求 git clone |
+
+本机取证版本为 Docker 29.8.0、Compose v5.7.0、Python 3.12.3；这不是所有目标机的最低版本承诺。目标发行包应选一套已冷装验证的版本并记录。
+
+系统 deb 的完整依赖要在**与目标初始 dpkg 状态相同的干净 VM / rootfs**中解析和下载。联网机器已经安装的依赖可能不会再次下载；只复制 `/var/cache/apt/archives` 或只下载顶层几个 deb，不能证明闭包完整。准备后在克隆的断网目标上执行 `apt-get --no-download install /介质/host/debs/*.deb` 验证；缺包即回到准备机补齐，不允许切回在线仓库兜底。若交付已装好工具的干净 rootfs，则记录其包清单，并验证导入后不需额外 apt 下载。
+
+WSL 可在准备机导出专门的干净发行版，再用 `wsl --import LLM-Offline D:\WSL\LLM-Offline ubuntu24.04-rootfs.tar --version 2` 导入。不要为制作安装包而终止或导出当前正在提供推理的生产发行版；rootfs 内也不应夹带现有业务数据库和密钥。数据目录建议放在 WSL ext4 内，Windows 磁盘用于源码 / 交付介质。
+
+### 2.2 全部容器镜像
+
+**VM-01 共 9 个必需镜像，Nginx 与 MinIO Client 都要打包。** 初次创建桶的 `minio-init` 一样依赖镜像，不能只导出长期运行容器。
+
+| Compose 服务 | 典型来源 | 版本 / 兼容性要求 |
+| --- | --- | --- |
+| postgres | `postgres` | 固定具体 tag / digest；与 Langfuse 迁移版本配套；本机是 PostgreSQL 17 系列 |
+| clickhouse | `clickhouse/clickhouse-server` | 按该 Langfuse 发布版本的参考 Compose 验证；本机 26.3.62.3，旧示例 24.8 不是此次已验收版本 |
+| redis | `redis` | 固定具体版本或源 digest；密码 / AOF 配置匹配 |
+| minio | `minio/minio` 或经验证的替代发行版 | 本仓库 entrypoint 使用 `sh -c`，所选镜像必须有 `/bin/sh` 并兼容目录权限 / server 命令 |
+| minio-init | `minio/mc` | 含 `/bin/sh` 和 `mc`，与服务端兼容；验证创建桶 / 重复启动的幂等行为 |
+| langfuse-web | `docker.langfuse.com/langfuse/langfuse` | 与 Worker 使用同一发布版本；本机应用版本 4.73.0 |
+| langfuse-worker | `docker.langfuse.com/langfuse/langfuse-worker` | 同上；验证 PostgreSQL / ClickHouse 迁移与异步入库 |
+| litellm | `ghcr.io/berriai/litellm` 或自行构建的离线发行镜像 | 本机 1.106.6 是 venv，**尚无已验收的对应容器镜像**；需通过下文回调依赖检查 |
+| nginx | `nginx` | 本机缓存 `nginx:1.28-alpine`；正式包锁 image ID，验证 TLS 与 SSE |
+
+若不复用 VM-02 / VM-03，另外打包 Prometheus、Grafana 镜像和它们的完整主配置、持久化目录规划、数据源 / dashboard provisioning。需要 DCGM 时再打包对应架构的 dcgm-exporter 和 NVIDIA Container Toolkit / 驱动物料；Strata 的本机 WSL 监控不要求安装 DCGM。
+
+当前 MinIO 运行的是 `cgr.dev/chainguard/minio`，其启动方式与仓库 MinIO shell 模板不同，**不能因为本机运行正常就直接替换 `MINIO_IMAGE`**。准备机必须验证所选 MinIO / mc 的 entrypoint 和权限，或提交一套相匹配的 Compose 配置后一起打包。
+
+镜像源清单模板：[offline/images.example.env](../offline/images.example.env)。它刻意保留待选版本，不能原样作为发布清单。镜像浮动源即使已下载，也要在导出时锁定 image ID；目标机仅使用本地离线别名，启动命令必须带 `--pull never --no-build`。
+
+### 2.3 Python 包、完整传递依赖和运行缓存
+
+| 文件 / 组件 | 固定直接依赖 | 用途 |
+| --- | --- | --- |
+| `requirements-observability.txt` | `litellm[proxy]==1.106.6`、`langfuse==4.18.0`、`prometheus-client==0.26.0`、`opentelemetry-exporter-otlp-proto-http==1.45.2`、`PyYAML==6.0.3`、`python-dotenv==1.2.4` | WSL / 宿主 venv、部署与验收脚本、工具示例 |
+| `requirements-callback.txt` | Prometheus client 0.26.0、OTEL API / SDK / OTLP HTTP exporter 1.45.2 | 检查 / 补齐所选 LiteLLM 容器内自定义回调依赖，不覆盖该容器的 LiteLLM 版本 |
+| `requirements.lock.txt` | 准备机空 venv 无网安装后 `pip freeze` 得到的**完整传递依赖精确版本** | 包括实际解析出的 SDK、HTTP、protobuf、模型 / tokenizer、Proxy 等依赖，不能仅带上面几个顶层 wheel |
+| `wheelhouse/*.whl` | 锁文件的全部 wheel，以及 pip / setuptools / wheel 的离线安装工具 | 对应 CPython 3.12、CPU 架构与 libc；glibc wheel 不等于 Alpine musl wheel |
+| Tokenizer 缓存 | 实际模型和 LiteLLM 代码路径需要的 tiktoken / Hugging Face 文件 | 在准备机预热实际编码器，并保留缓存路径；禁止首次请求再上网下载 |
+| 价格表 | LiteLLM 内置价格表 | `LITELLM_LOCAL_MODEL_COST_MAP=True`；本地模型成本另配真实价格，不从公网取表 |
+| 前端与插件 | Langfuse / Grafana 镜像内已构建资源、实际需要的 Grafana 插件 zip / 解压目录 | 不在目标机 npm install / yarn / 在线插件安装；本看板仅依赖内置面板和 Prometheus 数据源 |
+
+`litellm[proxy]` 的依赖不等于 PostgreSQL / Prisma 路径已离线准备好。本项目网关未使用 LiteLLM 自身数据库；WSL 启动会清除 `DATABASE_URL`。若要新增 LiteLLM 数据库功能，需要额外准备其 schema / Prisma 引擎、迁移与对应平台二进制，并重新验收，不能借用 Langfuse 的数据库配置直接启动。
+
+### 2.4 配置、证书、模型与数据
+
+| 物料 | 必备内容 |
+| --- | --- |
+| 源码快照 | Compose、`.env.example`、`litellm/config.yaml`、`observability_callback.py`、Nginx 配置、exporter、ops、tests、全部 docs 和 Grafana JSON；用同一 Git commit 打包 |
+| 镜像锁 | `images.lock.json` 的源引用 / digest / image ID / 架构；`images.env` 的本地别名；`images/images.tar` |
+| 运行 `.env` | 在离线目标现场生成；服务密码、SALT、64 位十六进制 ENCRYPTION_KEY、NEXTAUTH_SECRET、Master Key、项目 Keys、模型 Keys、实际 IP / URL |
+| TLS 与信任 | server.crt、server.key、完整 CA 链 / 内部根证书，SAN 包含实际 DNS / IP；系统和浏览器信任已导入；单独交付私钥 |
+| 模型配置 | `model_name` 是网关别名，`openai/` 后为真实上游 ID；api_base 含 `/v1`，未部署的路由删除；请求列表与验收矩阵一致 |
+| Prometheus | 完整主配置的合并方案、scrape 片段、16 recording rule、9 alert、Token 文件及其容器挂载 / UID；不覆盖既有主配置 |
+| Grafana | 51 面板 JSON、数据源 UID / 变量、provisioning 或导入步骤、已有 Alertmanager 通知路由 |
+| Strata 补充导出器 | Python wheel、`strata_extra.py`、服务单元、STRATA_API_KEY、JSON 地址、监听地址 / 防火墙；默认 9402 |
+| GPU 推理运行时 | 复用服务则记录版本 / 模型 ID / 内网地址；新装则带全部模型权重分片、tokenizer、配置、引擎二进制 / 镜像、依赖库和 GPU 驱动 / CUDA / CANN 等对应物料 |
+| 模型校验 | 权重和 tokenizer 全部文件的大小 / SHA-256；本地路径、许可文件、上下文 / 量化 / 参数配置；不允许启动时自动下载缺失分片 |
+| 数据 | 新装空目录与 UID/GID / 空间规划；迁移另带一致性备份和原镜像锁，禁止用运行中的数据目录简单复制当可恢复备份 |
+
+离线物料包与生产密钥分开交付。`offline_bundle.py` 拒绝包目录中的 `.env`、`.key` 和 `secrets/`；它不替代任意归档内容 / 文本的人工凭据审查。准备源码请用 `git archive`，不把工作目录、`.runtime`、数据和备份一起打包。
+
+## 3. 标准离线包结构
+
+```text
+llm-offline-ubuntu24.04-amd64-py312/
+├── source.tar                       同一个 Git commit 的源码
+├── images/images.tar                9 个核心镜像，另含实际新增组件
+├── images.lock.json                 源 digest、image ID、架构、大小
+├── images.env                       Compose 使用的本地锁定别名，仅 IMAGE 变量
+├── requirements.lock.txt            完整精确版本锁
+├── wheelhouse/*.whl                 包括全部传递依赖和安装工具
+├── cache/tokenizers/                宿主 / 容器实际使用的预热缓存
+├── host/README.md                   OS、架构、系统安装方式与既有依赖声明
+├── host/debs/ 或 rootfs/             新目标需要的完整系统物料
+├── models/README.md                 复用哪台内网服务，或权重 / 运行时路径与校验
+├── models/weights/                  仅部署包承诺新装推理服务时必需
+├── config/README.md                 拓扑、端口、配置合并与证书 / 密钥交付方式
+├── config/source-revision.txt       git rev-parse HEAD
+├── evidence/                        准备机的冷装 / 无网导入 / 依赖检查记录
+├── manifest.json                    全物料大小与 SHA-256
+└── SHA256SUMS                       含 manifest 自身的校验清单
+```
+
+该结构的三个 README 是实质性交付声明：系统包是否齐全、模型是复用还是新装、IP / 证书如何配置。不能只建空 README 就标记物料完整。封包工具检查清单和哈希，不证明 deb / wheel 的依赖闭包或模型能加载；这些由下面的无网安装和运行验收证明。
+
+## 4. 联网准备机操作
+
+以下在与目标平台一致的 **Linux / WSL** 运行。不要在 Windows Python 中直接下载 Linux wheel。用独立准备目录和 venv，不修改既有业务 venv。
+
+### 4.1 选版本、验证镜像、导出
 
 ```bash
+cd /源码/litellm-langfuse-monitoring
+cp offline/images.example.env offline/images.local.env
+# 编辑所有 REPLACE；Web / Worker 同版本；先核对该发布的官方 Compose。
+editor offline/images.local.env
+
+# 仅在联网准备阶段拉取。实际源如需镜像站，先确认 tag/digest 映射。
+python3 - <<'PY'
+import subprocess, sys
+from pathlib import Path
+sys.path.insert(0, "ops")
+from offline_bundle import image_env
+for image in image_env(Path("offline/images.local.env")).values():
+    subprocess.run(["docker", "pull", "--platform", "linux/amd64", image], check=True)
+PY
+```
+
+若通过 DDN / 其他镜像站获取，参考 `ops/pull-from-ddn.sh` 的 TSV 映射接口。原脚本提到的示例 TSV 并未随本仓库提供，需要自己创建：每行“已验证镜像站引用 TAB 正式源引用”；不要把下载索引页面直接当作 Docker registry。
+
+**打包前先完成三类无网镜像检查**：
+
+1. `minio` / `mc` 镜像内的 `/bin/sh`、server / mc 命令和数据 UID/GID 可用，且能创建桶。镜像启动方式不同就更新并验证整套 Compose，不能只换镜像名。
+2. LiteLLM 镜像内能导入 `litellm`、`prometheus_client`、OTEL API / SDK / HTTP exporter，能用真实 `get_instance_fn` 加载自定义回调。
+3. 在与目标相同的干净实验环境运行所选 Web / Worker / ClickHouse / PostgreSQL 组合，完成迁移、OTLP v4 入库、媒体上传和重启。正式物料不得仅依据“镜像能 pull”通过。
+
+LiteLLM 回调检查示例，`TESTED_LITELLM_IMAGE` 指向已选定镜像：
+
+```bash
+docker run --rm --pull never --network none --entrypoint python \
+  -e LITELLM_LOCAL_MODEL_COST_MAP=True -e LITELLM_OTEL_V2=false \
+  -v "$PWD/litellm:/work:ro" "$TESTED_LITELLM_IMAGE" -c \
+  'import prometheus_client, opentelemetry.sdk.trace; from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter; from litellm.proxy.types_utils.utils import get_instance_fn; get_instance_fn(value="observability_callback.observability", config_file_path="/work/config.yaml"); print("CALLBACK_IMPORT_OK")'
+```
+
+若镜像缺依赖，在联网准备机按其 Python / libc 下载 `requirements-callback.txt` 的完整 wheel，在该镜像上使用 `pip install --no-index --find-links ...` 构建最终镜像。把最终镜像写回清单；目标机不临时 pip install、不临时 build。某些镜像未使用 `python` 这个可执行名时，先确定其解释器路径并将检查命令一起记录。
+
+导出已在本地的镜像，工具**不会 pull**，缺镜像或架构不符直接失败：
+
+```bash
+export BUNDLE=/srv/offline/llm-offline-ubuntu24.04-amd64-py312
+mkdir -p "$BUNDLE"
+python3 ops/offline_bundle.py images \
+  --images-env offline/images.local.env --platform linux/amd64 --bundle "$BUNDLE"
+```
+
+工具生成 `llm-offline/<service>:<image-ID前16位>-amd64` 本地别名，保存完整 image ID / 原 repo digest，并导出包含别名的 tar。这样避免 `docker save/load` 后 repo digest 引用未被保留而导致 Compose 尝试访问仓库；目标机仍须验证完整 image ID，不能只看 tag 存在。
+
+### 4.2 下载完整 wheelhouse 并进行空环境安装
+
+```bash
+mkdir -p "$BUNDLE/wheelhouse" "$BUNDLE/evidence"
+python3.12 -m venv /srv/offline-build-venv
+PREP_PY=/srv/offline-build-venv/bin/python
+
+# 联网阶段允许获取包；only-binary 缺 wheel 就失败，不隐式带入源码构建。
+"$PREP_PY" -m pip download --only-binary=:all: \
+  --dest "$BUNDLE/wheelhouse" -r requirements-observability.txt pip setuptools wheel
+
+# 即使准备机联网，安装阶段也禁用索引；该空 venv 尚未安装应用依赖。
+PIP_DISABLE_PIP_VERSION_CHECK=1 "$PREP_PY" -m pip install \
+  --no-index --find-links "$BUNDLE/wheelhouse" -r requirements-observability.txt
+"$PREP_PY" -m pip check > "$BUNDLE/evidence/pip-check.txt"
+"$PREP_PY" -m pip freeze > "$BUNDLE/requirements.lock.txt"
+```
+
+还需在无网 / 无 pip 缓存的克隆环境，按这个锁文件再安装一次并运行导入检查。若准备环境已经存在 `/srv/offline-build-venv`，改用新的空目录，避免已有包把缺 wheel 问题遮住。若必须从 sdist 构建，联网阶段先在匹配目标的编译环境构建 wheel，把结果及其全部依赖放入 wheelhouse；目标机不用编译器联网补包。
+
+### 4.3 预热 Tokenizer、模型与宿主物料
+
+```bash
+mkdir -p "$BUNDLE/cache/tokenizers"
+export TIKTOKEN_CACHE_DIR="$BUNDLE/cache/tokenizers"
+"$PREP_PY" - <<'PY'
+import tiktoken
+for name in ("cl100k_base", "o200k_base"):
+    tiktoken.get_encoding(name).encode("offline tokenizer readiness")
+PY
+```
+
+上面只覆盖两个常见编码器；**实际模型 / 自定义编码器需要另行预热**。使用 Hugging Face 的场景应保存模型和 tokenizer 的完整本地文件与对应 cache；目标运行时设置 `HF_HUB_OFFLINE=1`、`TRANSFORMERS_OFFLINE=1` 并指向本地目录，禁止自动远程下载。LiteLLM 容器也要放入 / 挂载适用于其自身环境的缓存，例如只读挂到 `/opt/tokenizer-cache`，设置 `TIKTOKEN_CACHE_DIR=/opt/tokenizer-cache`；宿主缓存不自动出现在容器里。
+
+按 2.1 准备完整系统物料。若 GPU 服务也要新装，按 2.4 准备所有权重、运行时与驱动，并在断网条件验证模型加载；若复用，在 `models/README.md` 明确模型服务内网地址 / 版本 / ID、认证和负责人。联网准备机上的每一个额外下载动作都要进入物料清单，不能留给目标机首启。
+
+### 4.4 打包同一版源码并封包
+
+```bash
+mkdir -p "$BUNDLE/host" "$BUNDLE/models" "$BUNDLE/config"
+# 先完成相应 README 和实际系统 / 模型物料，不用空文件代替。
+editor "$BUNDLE/host/README.md" "$BUNDLE/models/README.md" "$BUNDLE/config/README.md"
+git rev-parse HEAD > "$BUNDLE/config/source-revision.txt"
+git archive --format=tar -o "$BUNDLE/source.tar" HEAD
+
+python3 ops/offline_bundle.py seal \
+  --bundle "$BUNDLE" --platform linux/amd64 --python-version 3.12
+python3 ops/offline_bundle.py verify --bundle "$BUNDLE"
+```
+
+`git archive` 只包含已提交文件，打包前要求 Git 工作区干净且当前提交就是批准版本。封包后不要再改配置模板或增加包；如有改动重新封包。输出的 `checksum_file_sha256` 通过独立受控渠道记录，避免传输中清单与文件一起被错误替换。SHA-256 用于完整性检查，不等价于发布者数字签名。
+
+将整个目录复制到离线介质；运行密钥和 TLS 私钥由单独渠道到目标机。目标验收报告写到包目录之外，保持封包内容不变。
+
+## 5. 完全离线目标机实施
+
+### 5.1 先阻断外网，再导入和安装
+
+选择独立干净实验机 / WSL 发行版进行首次验收；不要清空当前生产 Docker、pip 缓存或数据卷来模拟“干净”。外网出口从冷安装开始就阻断，只允许部署矩阵中的内网地址、DNS、NTP 和管理通道。Docker 发布端口与出站策略可能绕过主机 ufw，需以实际 Docker 网桥 / 上游网络策略为准。
+
+留存出口 ACL / 路由、测试时间、内网白名单与外网拒绝日志。单独 curl 几个公网域名失败，不足以证明完全隔离；由网络策略和请求审计共同证明。不要把 Docker backend 直接设为 `internal: true` 后还期待它能访问外部 GPU VM；应按内网访问需求实施出口策略。
+
+```bash
+export BUNDLE=/介质/llm-offline-ubuntu24.04-amd64-py312
+# 先使用已离线安装的 python3 校验；不需要 PyYAML、dotenv 或网络。
+python3 /可信交付目录/ops/offline_bundle.py verify --bundle "$BUNDLE" \
+  --report /var/tmp/offline-artifacts-before-load.json
+cd "$BUNDLE"
+sha256sum -c SHA256SUMS
+docker load -i images/images.tar
+python3 /可信交付目录/ops/offline_bundle.py verify --bundle "$BUNDLE" \
+  --loaded-images --report /var/tmp/offline-artifacts-after-load.json
+```
+
+校验工具本身应随受控交付目录预先提供；首次解压源码前先以独立记录的 SHA256SUMS 摘要确认来源。上述路径不是联网下载地址，不能先 git clone 再开始“离线验收”。
+
+安装系统包 / 导入 rootfs 后，使用无索引方式安装验收 venv：
+
+```bash
+python3.12 -m venv /opt/llm-observability/.venv
+PIP_NO_INDEX=1 PIP_DISABLE_PIP_VERSION_CHECK=1 /opt/llm-observability/.venv/bin/python \
+  -m pip install --no-index --find-links "$BUNDLE/wheelhouse" -r "$BUNDLE/requirements.lock.txt"
+/opt/llm-observability/.venv/bin/python -m pip check
+```
+
+### 5.2 解压配置、生成现场密钥与证书
+
+```bash
+mkdir -p /opt/llm-gateway
+tar -xf "$BUNDLE/source.tar" -C /opt/llm-gateway
+cd /opt/llm-gateway
 cp .env.example .env
-vi .env
-# 修改所有 IMAGE、密码和 IP
-# 先逐个拉取，确认实际镜像在仓库存在且架构匹配
-set -a; source .env; set +a
-docker pull "$POSTGRES_IMAGE"
-docker pull "$CLICKHOUSE_IMAGE"
-docker pull "$REDIS_IMAGE"
-docker pull "$MINIO_IMAGE"
-docker pull "$MINIO_MC_IMAGE"
-docker pull "$LANGFUSE_WEB_IMAGE"
-docker pull "$LANGFUSE_WORKER_IMAGE"
-docker pull "$LITELLM_IMAGE"
-# 只打包已拉取的镜像
-docker save -o llm-images.tar \
-  "$POSTGRES_IMAGE" "$CLICKHOUSE_IMAGE" "$REDIS_IMAGE" \
-  "$MINIO_IMAGE" "$MINIO_MC_IMAGE" "$LANGFUSE_WEB_IMAGE" \
-  "$LANGFUSE_WORKER_IMAGE" "$LITELLM_IMAGE"
-sha256sum llm-images.tar > llm-images.tar.sha256
-# 同时复制整个部署目录（不要把生产密钥放入公共介质）
-tar czf llm-configs.tar.gz docker-compose.yml .env.example litellm prometheus ops
-```
-
-将 `llm-images.tar`、校验文件、`llm-configs.tar.gz` 拷贝到 VM-01；核对：
-
-```bash
-sha256sum -c llm-images.tar.sha256
-docker load -i llm-images.tar
-docker image ls
-```
-
-如果部署节点架构是 `aarch64`，不能直接导入仅 `amd64` 的镜像；需要在中转机下载对应架构镜像。
-
-## 5. VM-01 配置准备
-
-```bash
-sudo mkdir -p /opt/llm-gateway
-cd /opt/llm-gateway
-sudo tar xzf /path/to/llm-configs.tar.gz
-sudo cp .env.example .env
-sudo chmod 600 .env
-sudo mkdir -p data/{postgres,clickhouse,clickhouse-logs,redis,minio}
-```
-
-编辑 `.env`：
-
-```bash
-vi .env
-```
-
-**必须修改** `HOST_IP`、全部 `*_IMAGE`、数据库/Redis/MinIO 密码、`NEXTAUTH_URL`、`LANGFUSE_MEDIA_PUBLIC_ENDPOINT`、`LITELLM_MASTER_KEY`、三个推理引擎密钥；所有 `REPLACE` 字符串必须消失。
-
-生成安全随机值：
-
-```bash
-openssl rand -hex 32   # ENCRYPTION_KEY: 恰好 64 位十六进制
-openssl rand -base64 48 # SALT
-openssl rand -base64 48 # NEXTAUTH_SECRET
-openssl rand -base64 36 # 各服务密码（避免 @ : / 等 URL 特殊字符）
-```
-
-`DATABASE_URL` 由 Compose 使用 PostgreSQL 密码拼接，因此**不要在 POSTGRES_PASSWORD 中使用 URL 保留字符**，否则需 URL 编码；推荐使用 `openssl rand -hex 24`。MinIO、Redis、ClickHouse 密码同样建议只用十六进制字符，降低 shell/URL 转义风险。
-
-配置 GPU VM 实际地址：
-
-```bash
-vi litellm/config.yaml
-```
-
-示例已包含三个模型。必须在 GPU VM 上检查模型 ID：
-
-```bash
-curl -H 'Authorization: Bearer YOUR_UPSTREAM_KEY' http://10.0.0.11:8000/v1/models
-curl -H 'Authorization: Bearer YOUR_UPSTREAM_KEY' http://10.0.0.12:30000/v1/models
-curl -H 'Authorization: Bearer YOUR_UPSTREAM_KEY' http://10.0.0.13:8008/v1/models
-```
-
-`litellm_params.model` 的 `openai/` 后面填写真实上游模型 ID；`model_name` 是对外暴露的统一名称。无上游鉴权的服务可按实际策略配置，但不应把生产 GPU API 暴露到不可信网络。
-
-## 6. Langfuse 首次启动
-
-**重要**：初次启动时 `.env` 中的 `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` 尚未生成，先仅启动 Langfuse 和内部依赖。`minio-init` 创建对象存储桶。Compose 的 MinIO 健康检查/版本兼容性应在验收时验证。
-
-```bash
-cd /opt/llm-gateway
-docker compose --env-file .env config -q
-docker compose --env-file .env up -d --pull never \
-  postgres clickhouse redis minio minio-init langfuse-worker langfuse-web
-docker compose ps
-docker compose logs --tail=100 langfuse-web langfuse-worker
-```
-
-浏览器访问 `http://192.168.10.10:3000`，注册首个管理员，创建 Organization、Project，然后在 Project Settings 中创建 API Keys。Langfuse **没有预置默认管理员密码**。
-
-检查 API：
-
-```bash
-curl -i http://192.168.10.10:3000/api/public/health
-```
-
-把生成的公钥、私钥写入 VM-01 的 `.env`：
-
-```dotenv
-LANGFUSE_PUBLIC_KEY=pk-lf-实际公钥
-LANGFUSE_SECRET_KEY=sk-lf-实际私钥
-LANGFUSE_HOST=http://langfuse-web:3000
-```
-
-注意：某些 Langfuse v4 发布版本对媒体对象存储外部端点、MinIO CORS、ClickHouse 数据库初始化等有附加要求。若实际版本与此示例不兼容，**必须以同一发布标签的官方 Compose 作为兼容性基线**，不要强行修改内部依赖或绕过健康检查。当前部署包是可审查的独立配置，不是经过官方认证的版本锁定发行包。
-
-## 7. LiteLLM 启动与联调
-
-`litellm/config.yaml` 已启用 `prometheus` 与 `langfuse_otel` 回调；需要选择支持这两个回调的 LiteLLM 镜像。
-
-```bash
-cd /opt/llm-gateway
-docker compose --env-file .env up -d --pull never litellm
-docker compose ps litellm
-docker compose logs -f --tail=200 litellm
-```
-
-验证模型列表：
-
-```bash
-curl -fsS http://192.168.10.10:4000/v1/models \
-  -H 'Authorization: Bearer sk-实际MasterKey'
-```
-
-非流式调用：
-
-```bash
-curl -sS http://192.168.10.10:4000/v1/chat/completions \
-  -H 'Authorization: Bearer sk-实际MasterKey' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"qwen-vllm","messages":[{"role":"user","content":"只回复OK"}],"max_tokens":32}'
-```
-
-流式调用（验证 TTFT）：
-
-```bash
-curl -N -sS http://192.168.10.10:4000/v1/chat/completions \
-  -H 'Authorization: Bearer sk-实际MasterKey' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"qwen-strata","stream":true,"messages":[{"role":"user","content":"用三句话解释KV Cache"}],"max_tokens":96}'
-```
-
-随后在 Langfuse 项目 Trace 列表查看调用；若无 Trace，检查 `langfuse_otel` 版本兼容性、Langfuse API Key、`LANGFUSE_HOST`、`litellm` 容器日志。注意回调可能异步上报，通常不是零延迟出现。
-
-## 8. Prometheus（VM-02 已有）
-
-**优先复用 LiteLLM 原生 `/metrics` 端点。** 部署包的 Compose 不启用独立 4001 端口，因为该参数与镜像版本存在兼容差异。先在 VM-01 验证：
-
-```bash
-curl -i -H 'Authorization: Bearer sk-实际MasterKey' \
-  http://192.168.10.10:4000/metrics
-```
-
-如果返回 404，再检查 `/metrics/`；如果返回 401，核对认证；如果不暴露指标，检查 Prometheus 回调是否成功加载及所选镜像版本。不要盲目开放无鉴权的独立 Metrics 端口。
-
-在 VM-02 创建仅 Prometheus 进程可读的密钥文件：
-
-```bash
-sudo install -d -m 750 /etc/prometheus/secrets
-printf '%s' 'sk-实际MasterKey' | sudo tee /etc/prometheus/secrets/litellm_master_key >/dev/null
-sudo chown prometheus:prometheus /etc/prometheus/secrets/litellm_master_key
-sudo chmod 600 /etc/prometheus/secrets/litellm_master_key
-```
-
-把 `prometheus/litellm-scrape.yml` 中的 **列表条目** 合并到现有 `/etc/prometheus/prometheus.yml` 的 `scrape_configs:` 列表内，不要直接用该片段覆盖主配置。若 Prometheus 运行在 Docker 中，必须把密钥文件挂载到容器，并确保路径与 `credentials_file` 一致。
-
-```bash
-promtool check config /etc/prometheus/prometheus.yml
-# systemd 安装：
-sudo systemctl reload prometheus || sudo systemctl restart prometheus
-# Docker 部署：按现有方式重启/热加载，不要执行无效的 systemctl 命令
-```
-
-Grafana Explore / Prometheus：
-
-```promql
-up{job="litellm-gateway"}
-```
-
-若为 0，检查网络、认证、metrics_path、Prometheus Target 页面及 `docker compose logs litellm`。
-
-## 9. Grafana（VM-03 已有）
-
-无需启动新 Grafana。使用现有 Prometheus 数据源，新建 Dashboard：
-
-| Panel | PromQL 示例 | 说明 |
-|---|---|---|
-| 网关可用性 | `up{job="litellm-gateway"}` | 1=抓取正常 |
-| 输入 Token 速率 | `sum(rate(litellm_input_tokens_metric[5m]))` | 根据实际导出类型调整 |
-| 输出 Token 速率 | `sum(rate(litellm_output_tokens_metric[5m]))` | tokens/s |
-| 请求速率 | `sum(rate(litellm_proxy_total_requests_metric[5m]))` | requests/s |
-| 请求失败速率 | `sum(rate(litellm_proxy_failed_requests_metric[5m]))` | errors/s |
-
-**重要**：Prometheus 客户端库可能对 Counter 自动添加 `_total`，Histogram 也有 `_bucket/_sum/_count`；指标名称和 label 必须以 VM-01 实际 `/metrics` 为准。不要将上面示例当成所有 LiteLLM 版本都可直接执行的固定契约。
-
-查询实际指标名：
-
-```bash
-curl -sS -H 'Authorization: Bearer sk-实际MasterKey' \
-  http://192.168.10.10:4000/metrics \
-  | grep -E '^# (HELP|TYPE) litellm_' | head -80
-```
-
-P95 TTFT 只有在实际暴露相应 Histogram 时才能使用 `histogram_quantile(0.95, sum by(le,...) (rate(..._bucket[5m])))`。若 TTFT 只暴露 Summary，则应使用相应 quantile 序列且不能跨实例聚合 quantile。
-
-## 10. 指标能力边界与数据治理
-
-| 需求 | 可用方案 | 限制 |
-|---|---|---|
-| Token / 成本 / 模型调用 | Langfuse + LiteLLM Prometheus | 成本需模型价格配置正确 |
-| TTFT | LiteLLM 流式请求 Metrics | 非流式请求未必有首 Token 事件 |
-| TPOT | 先检查当前 LiteLLM 是否导出；否则增加网关自定义 Callback | 不能直接把请求总耗时 / 输出 Token 当准确 TPOT |
-| Client IP | LiteLLM 指标/可信反向代理日志 | 逐请求 IP+Token 联表不是原生保证 |
-| GPU 利用率 | GPU VM 的 DCGM Exporter | 网关无法推断硬件利用率 |
-| KV Cache | vLLM/SGLang 自身 /metrics | Strata 的指标接口需独立验证 |
-
-**推荐**：用户维度采用 LiteLLM User ID / Virtual Key；IP 作为辅助审计字段，不要将原始请求 ID 或任意高基数 IP 无限制写入 Prometheus 标签。Langfuse 可以保存请求级 Trace，但如果要将 IP 写入 Trace，必须先验证可信 IP 传递和回调字段映射；不要假定自动存在。
-
-## 11. 运维命令速查
-
-```bash
-cd /opt/llm-gateway
-# 查看服务
-docker compose ps
-# 查看单服务日志
-docker compose logs --tail=200 -f litellm
-docker compose logs --tail=200 -f langfuse-worker
-# 重启网关（不动数据库）
-docker compose restart litellm
-# 重启 Langfuse
-docker compose restart langfuse-web langfuse-worker
-# 查看资源
-docker stats --no-stream
-# 只停应用，不删除数据
-docker compose stop litellm langfuse-web langfuse-worker
-# 恢复
-docker compose up -d --pull never
-# 检查 Compose 展开
-docker compose --env-file .env config -q
-```
-
-**禁止在未备份时执行** `docker compose down -v`、删除 `data/`、直接升级 ClickHouse 数据目录、随意修改 `ENCRYPTION_KEY`。
-
-## 12. 备份、恢复、升级
-
-生产备份应在一致性边界上执行。推荐：停止 LiteLLM 与 Langfuse Web/Worker 写入，随后对 PostgreSQL、ClickHouse、MinIO 和 Redis 做应用一致性备份；再恢复业务。以下是**停机备份**的保守流程（先安排维护窗口）：
-
-```bash
-cd /opt/llm-gateway
-docker compose stop litellm langfuse-web langfuse-worker
-mkdir -p /backup/llm-$(date +%F)
-# 在业务停止写入后，停止数据库/对象存储进程以获得一致的文件快照
-docker compose stop postgres clickhouse redis minio
-sudo tar -C /opt/llm-gateway -czf /backup/llm-$(date +%F)/data.tar.gz data
-sudo cp docker-compose.yml /backup/llm-$(date +%F)/
-sudo cp -a litellm /backup/llm-$(date +%F)/
-sudo cp -a .env /backup/llm-$(date +%F)/env.secret
-sudo chmod 600 /backup/llm-$(date +%F)/env.secret
-docker compose up -d --pull never
-```
-
-恢复必须在**同一套镜像版本**下进行，并在隔离测试环境先演练：停止全部容器→恢复 `data/`、`.env`、配置→检查目录权限→启动依赖→启动 Langfuse→启动 LiteLLM→核对历史 Trace 和 Token 数据。备份文件应加密并异地保存。高并发或严格 RPO 环境应改用 PostgreSQL 逻辑/物理备份、ClickHouse 原生备份及 MinIO 对象级备份，不应依赖每日长时间停机。
-
-升级：先记录 `docker image inspect` digest，备份，使用同版本 staging 环境测试迁移，验证 Langfuse Web/Worker 与 ClickHouse 兼容，再按依赖顺序升级。**不要直接使用浮动 `latest` 标签。**
-
-## 13. 验收清单
-
-- [ ] 离线镜像完整且 SHA256 一致；镜像架构正确
-- [ ] 所有镜像均固定具体版本/digest，`.env` 无 REPLACE
-- [ ] PostgreSQL、ClickHouse、Redis、MinIO 健康，MinIO 桶已创建
-- [ ] Langfuse Web、Worker 正常；Project Keys 已创建
-- [ ] LiteLLM `/v1/models` 列出三个模型
-- [ ] vLLM、SGLang、Strata 各完成一次流式/非流式请求
-- [ ] Langfuse 收到三种模型的 Trace、Token、成本字段
-- [ ] Prometheus `up{job="litellm-gateway"} == 1`
-- [ ] Grafana 可以看到 Token、QPS、错误率
-- [ ] TTFT/TPOT 的实际数据类型和标签已核对
-- [ ] IP+Token 的关联能力已单独验收（未实现则明确标注）
-- [ ] 防火墙限制 DB/MinIO/管理入口，密码未出现在日志中
-- [ ] 备份、恢复、告警已演练
-
-## 14. 常见故障排查
-
-| 现象 | 优先检查 |
-|---|---|
-| Langfuse Web 502/启动失败 | `docker compose logs langfuse-web langfuse-worker`、ClickHouse 迁移、DB 连接 |
-| MinIO 桶不存在 | `docker compose logs minio-init`、对象 API 端口和凭据 |
-| LiteLLM 无 Trace | `langfuse_otel` 版本、Keys、LANGFUSE_HOST、Langfuse Worker |
-| Token 为 0 | 上游 `usage` 字段、模型映射、stream usage、LiteLLM Token 计算方式 |
-| Prometheus 401 | Master Key / Bearer 认证 / metrics 路径 |
-| Prometheus 404 | Metrics callback 未启用或版本/端点差异 |
-| TTFT 不存在 | 流式请求是否完成、导出类型是否支持、Metrics 标签名 |
-| TPOT 偏差大 | 网关和引擎统计口径不同、输出 Token 数过少、网络延迟 |
-| Strata 请求失败 | 模型 ID、Strata API Key、`/v1/models`、GPU VM 防火墙 |
-| Langfuse 页面媒体无法打开 | 9090 对象 API 可达性、媒体 endpoint、MinIO CORS |
-
-## 15. 官方技术依据（仅供审计，不要求操作时再去查找）
-
-- Langfuse Compose 自部署： https://langfuse.com/self-hosting/deployment/docker-compose
-- Langfuse 参考 Compose： https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
-- LiteLLM Prometheus： https://docs.litellm.ai/docs/proxy/prometheus
-
-**交付说明**：本文及同目录 Compose 是一套独立可审查的部署基线。因为无法在此环境拉取目标镜像、启动真实 GPU 推理后端，不能宣称已完成生产验收。正式上线前须锁定版本、核验 Langfuse v4 依赖兼容性、LiteLLM 回调和 Prometheus 实际指标。
-
-## 补充：三类高级指标的落地验收
-
-1. **IP + Token 逐请求关联**：可信 Nginx 统一生成 `X-Request-ID` 并验证真实来源 IP；LiteLLM Callback 将 request_id、client_ip、user_id、model、usage、cost、status 写入 Langfuse generation metadata。确认 Callback 当前版本能取得可信请求元数据，否则需在入口增加中间件。禁止将 request_id/client_ip 作为 Prometheus 标签。
-2. **TTFT / TPOT**：网关在流式响应路径记录请求开始、首个有效输出、最后有效输出的单调时间戳，并以模型 usage 的输出 token 数计算 `TPOT=(last-first)/(output_tokens-1)`（仅 output_tokens>1）；SSE chunk 数不等于 token 数。Langfuse 记录每次请求的计时字段，Prometheus 使用低基数 histogram；非流式、取消、缺少 usage 的请求单独标记，禁止混入精确统计。
-3. **GPU / KV Cache**：GPU VM 运行 DCGM Exporter（需要 NVIDIA 驱动和容器 GPU 权限）；Prometheus 直接抓取 vLLM/SGLang 的 `/metrics`。Strata 先验证 `/metrics`，不存在时需定制 Exporter 或修改引擎埋点；LiteLLM 无法推断引擎内部 KV Cache。
-
-上述扩展属于实施清单，**本部署包尚未包含完整 Callback、流式拦截器和 Strata Exporter 的生产实现**。
-
-## Nginx 反向代理：离线安装、启动、配置与验证（新增）
-
-本项目已经将 Nginx 纳入同一 VM-01 Docker Compose，配置位于 `nginx/nginx.conf`。Nginx 为 **唯一对外 API 入口**：`https://VM01:8443/v1/...`；Langfuse UI：`https://VM01:8444`；Prometheus 从 VM-02 抓取 `http://VM01:9401/metrics`。LiteLLM:4000 与 Langfuse:3000 仅在 Docker 内网暴露，不能再按本文早期章节的直连 4000/3000 操作。生产优先使用内网 DNS、企业 CA 证书与标准 443 端口；示例 8443/8444 用于避免同一 IP 端口冲突。
-
-### 1. 离线镜像准备
-
-联网准备机（与目标机相同 CPU 架构）：
-
-```bash
-docker pull nginx:1.28-alpine
-docker save -o nginx-1.28-alpine.tar nginx:1.28-alpine
-sha256sum nginx-1.28-alpine.tar > nginx-1.28-alpine.tar.sha256
-```
-
-将 TAR 和校验文件通过受控方式传至 VM-01：
-
-```bash
-sha256sum -c nginx-1.28-alpine.tar.sha256
-docker load -i nginx-1.28-alpine.tar
-docker image inspect nginx:1.28-alpine --format '{{.Id}}'
-```
-
-其余镜像同样离线导入。正式生产请固定经验证的不可变 digest，避免使用浮动标签。
-
-### 2. 目录和 TLS 证书
-
-```bash
-cd /opt/llm-gateway
+chmod 600 .env
 mkdir -p nginx/certs data/nginx-logs
 chmod 700 nginx/certs
-# 最好从企业 CA 签发带 DNS/IP SAN 的证书，放到以下位置：
-# nginx/certs/server.crt
-# nginx/certs/server.key
+# 拷贝企业 CA 签发的 server.crt / server.key，SAN 包含实际 IP / DNS。
 chmod 600 nginx/certs/server.key
+editor .env litellm/config.yaml nginx/nginx.conf
 ```
 
-没有企业 CA 时，以下命令仅用于内网测试（把 IP 改为 VM-01 的实际 IP）：
+必须完成以下配置，逐项记录到现场配置清单：
 
-```bash
-openssl req -x509 -nodes -newkey rsa:3072 -sha256 -days 30 \
-  -keyout nginx/certs/server.key -out nginx/certs/server.crt \
-  -subj "/CN=llm.internal" \
-  -addext "subjectAltName=DNS:llm.internal,IP:192.168.10.10"
-chmod 600 nginx/certs/server.key
+- `HOST_IP` 是 VM-01 实际地址；`NEXTAUTH_URL=https://VM01:8444`，对象存储公开 endpoint 必须从实际浏览器可达。
+- 使用 `openssl rand -hex 24` 生成数据库 / Redis / MinIO 密码，避免拼入 DATABASE_URL 时需要转义的 `@:/#` 等字符；`ENCRYPTION_KEY` 用 `openssl rand -hex 32`，SALT / NEXTAUTH_SECRET 另行生成。迁移既有数据时保留原加密键。
+- `LITELLM_OTEL_V2=false`、`LITELLM_LOCAL_MODEL_COST_MAP=True`，回调只能是 `prometheus` 与 `observability_callback.observability`；不要同时启用 `langfuse_otel` 重复上报。项目 Keys 允许在首次创建项目前为空，创建后必须补齐。
+- `LANGFUSE_HOST=http://langfuse-web:3000` 是网关容器内部地址；宿主验收客户端使用 8444，不能把内部 DNS 交给外部客户端。模型 Keys / Master Key 在目标现场填写，删除未部署的模型路由。
+- Nginx :9401 的 `allow` 改为真实 VM-02 来源；证书路径、SSE `proxy_buffering off`、长请求超时、内网 DNS / 时钟正确。
+- 选择是否配置本地模型实际费用。未配价格必须标为 unconfigured；不得把 0 当成已验收的免费成本。
+- 若目标 LiteLLM 使用 tokenizer 缓存，在本地 Compose override 增加只读挂载及 `TIKTOKEN_CACHE_DIR`；override 也记录 SHA-256。生产配置修改后不回写已封包的介质。
+
+**媒体访问需要额外核查 HTTPS**：当前模板的 MinIO 主机映射 9090 为 HTTP，而 Langfuse UI 为 HTTPS。实际需要图片 / 附件时，应通过内部 HTTPS 对象存储或准备机已验证的 Nginx TLS 入口提供媒体地址，并配置允许 Langfuse UI 来源的 CORS；不能把浏览器 mixed-content / CORS 失败当作离线网络故障忽略。仓库默认 Nginx 未代理 MinIO，若采用下列独立端口方案，把它连同本地 override 一起交付并验收：
+
+```nginx
+# 加入 nginx.conf 的 http 内，使用与入口匹配的证书。
+server {
+  listen 9443 ssl;
+  ssl_certificate /etc/nginx/certs/server.crt;
+  ssl_certificate_key /etc/nginx/certs/server.key;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  location / {
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_pass http://minio:9000;
+  }
+}
 ```
-
-测试证书不应替代正式 CA 证书。若以 IP 访问，证书必须包含该 IP 的 SAN。
-
-### 3. 启动与配置检查
-
-```bash
-cp -n .env.example .env
-# 编辑 .env，设置真实 HOST_IP、NGINX_IMAGE、密钥、镜像标签和 NEXTAUTH_URL
-docker compose config -q
-docker compose up -d postgres clickhouse redis minio minio-init
-docker compose up -d langfuse-worker langfuse-web litellm
-docker compose up -d nginx
-docker compose exec nginx nginx -t
-docker compose ps
-docker compose logs --tail=100 nginx
-```
-
-如果此前已有 LiteLLM/Langfuse 直连端口的客户端，先做好切换窗口与回滚计划。此 Compose 已取消宿主机 4000、3000 的端口发布。注意 Docker 端口发布可能绕过主机 ufw：应在上游防火墙/安全组只允许受信客户端访问 8443、管理员访问 8444、Prometheus VM-02 访问 9401；8080 仅用于 HTTP 跳转。MinIO 9090 只允许授权网段。
-
-### 4. 请求透传、流式响应和安全
-
-- `proxy_buffering off` 防止 SSE 流式输出被 Nginx 缓冲；`proxy_read_timeout 600s` 适配长生成。
-- `X-Request-ID` 使用 Nginx 生成的 `$request_id`；`X-Real-IP` 与 `X-Forwarded-For` 使用可信入口的 `$remote_addr`，覆盖客户端伪造的同名请求头。
-- 如果 Nginx 前面还有 LB，需要在 Nginx 中显式配置可信的 `set_real_ip_from` 与 `real_ip_header`，不能无条件信任外部 `X-Forwarded-For`。
-- 访问日志位于 `data/nginx-logs/access.log`，为 JSON 格式，包含 IP、Request ID、耗时、状态码；**日志本身不等于 IP-Token 关联已经完成**。关联仍需 LiteLLM 请求级 Callback 与相同 Request ID。
-- 默认按 IP 限速 `20r/s`，突发 `60`；应按真实并发调整，并关注共享 NAT 下多个用户使用同一 IP 的情况。
-- `/metrics` 单独使用 9401 端口，并以 Nginx `allow` 限制 Prometheus 源 IP。若 LiteLLM 版本要求 Metrics Bearer Token，需在 Prometheus 使用 `bearer_token_file`，不要在 Git 提交密钥。
-
-### 5. 验证命令
-
-```bash
-# 在 VM-01 上检查证书和反向代理（测试自签名证书时用 -k）
-curl -k -i https://192.168.10.10:8443/health/readiness
-curl -k -i https://192.168.10.10:8444/
-curl -k -sS https://192.168.10.10:8443/v1/models -H "Authorization: Bearer YOUR_KEY"
-# 在 VM-02 Prometheus 机器上执行：
-curl -i http://192.168.10.10:9401/metrics
-# 若返回 401，使用正确的 Metrics Bearer Token；若返回 403，检查 Nginx allow 与来源地址。
-# 在 VM-01 查看 Nginx 日志：
-docker compose logs --tail=100 nginx
-tail -f data/nginx-logs/access.log
-```
-
-验证流式响应：
-
-```bash
-curl -k -N https://192.168.10.10:8443/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_KEY" -H "Content-Type: application/json" \
-  -d '{"model":"qwen-vllm","stream":true,"messages":[{"role":"user","content":"你好"}]}'
-```
-
-如使用正式 CA 证书，删除 `-k` 并通过系统信任链验证 TLS。
-
-### 6. 常见故障与回滚
-
-| 现象 | 检查项 |
-|---|---|
-| 502 Bad Gateway | `docker compose ps`、`docker compose logs litellm langfuse-web nginx`、Docker 网络 |
-| 504 / SSE 中断 | 推理引擎响应、`proxy_read_timeout`、客户端超时 |
-| 413 Request Entity Too Large | `client_max_body_size` |
-| 429 Too Many Requests | Nginx `limit_req` 和 LiteLLM 限流策略 |
-| Prometheus 403 | 9401 allow IP / 防火墙 / NAT |
-| Prometheus 401 | LiteLLM Metrics 鉴权 |
-| TLS 握手失败 | 证书 SAN、证书链、密钥权限、协议 |
-
-仅回滚 Nginx 配置时，先恢复上一个已验证的 `nginx/nginx.conf`，执行：
-
-```bash
-docker compose exec nginx nginx -t
-docker compose exec nginx nginx -s reload
-```
-
-**部署验收状态：** 本节为可操作的部署配置，尚未在实际 VM-01 上进行完整容器与 TLS 端到端验证。此前章节提到的 4000/3000 直连端口、`NEXTAUTH_URL` HTTP 地址，应以本节 Nginx 入口为准。
-
-
-## Prometheus / Grafana 监控指标、部署配置和告警（新增）
-
-VM-02、VM-03 已经存在，不再新建 Prometheus 或 Grafana 容器。仓库提供：
-
-- `prometheus/litellm-scrape.yml`：LiteLLM、vLLM、SGLang、DCGM 的 Scrape Job。
-- `prometheus/alerts.yml`：网关不可用、错误率、请求积压、KV Cache、GPU 温度告警。
-- `grafana/dashboards/litellm-gpu-overview.json`：16 个可导入的监控面板。
-
-### 1. VM-02：配置 Prometheus
-
-先在 VM-01 的 LiteLLM 容器确认 Metrics 接口：
-
-```bash
-docker compose exec litellm sh -c 'curl -fsS http://127.0.0.1:4000/metrics || true'
-# /metrics 默认可能需要 LiteLLM API Key；请用 Bearer Token 重试。
-```
-
-在 VM-02 中创建密钥文件（不要提交 Git）：
-
-```bash
-sudo install -d -m 700 /etc/prometheus/secrets
-sudo sh -c 'umask 077; cat > /etc/prometheus/secrets/litellm_metrics_token'
-# 粘贴有效的 LiteLLM Master Key 或具有指标权限的 Key，然后按 Ctrl-D
-sudo chmod 600 /etc/prometheus/secrets/litellm_metrics_token
-```
-
-将 `prometheus/litellm-scrape.yml` 的各 Job 追加到现有 `/etc/prometheus/prometheus.yml` 的 `scrape_configs:` 下，**不能直接把该片段当成完整 prometheus.yml**。如需 GPU/推理指标，先验证 GPU VM 的 `/metrics` 与 DCGM :9400 能够从 VM-02 访问。
-
-在已有 `prometheus.yml` 的顶层合并：
 
 ```yaml
-rule_files:
-  - /etc/prometheus/rules/llm-alerts.yml
+# docker-compose.local.yml 的必要端口补充；其余配置由主文件合并。
+services:
+  nginx:
+    ports:
+      - "${HOST_IP}:9443:9443"
 ```
 
-复制告警文件到 VM-02：
+此时现场设置 `LANGFUSE_MEDIA_PUBLIC_ENDPOINT=https://VM01:9443`，放行实际浏览器的内网访问并信任 CA。CORS 按所选 MinIO 发布版配置，保留上传 / 读取 / OPTIONS 的真实浏览器证据；检查 Nginx 全局请求体上限与附件大小。服务内部 event endpoint 仍为 `http://minio:9000`，不要改成浏览器入口。
+
+Compose 始终使用两个 env 文件：先现场 `.env`，再用包的 `images.env` 覆盖镜像引用。`env_file: [.env]` 仍负责注入现场运行密钥。
 
 ```bash
-sudo mkdir -p /etc/prometheus/rules
-sudo cp prometheus/alerts.yml /etc/prometheus/rules/llm-alerts.yml
-promtool check rules /etc/prometheus/rules/llm-alerts.yml
-promtool check config /etc/prometheus/prometheus.yml
+docker compose --env-file .env --env-file "$BUNDLE/images.env" config -q
+docker compose --env-file .env --env-file "$BUNDLE/images.env" config --images
 ```
 
-如果 Prometheus 是容器部署，请将密钥和告警规则文件映射进容器，并在容器内执行 `promtool`。重新加载时按现有部署方式发送 SIGHUP 或启用 `--web.enable-lifecycle` 后调用：
+不要将完整 `docker compose config` 输出存入公开报告，它会展开密码；`config -q` 和 `config --images` 足以检查语法 / 镜像列表。若有本地 override，后续每条 Compose 命令都使用相同 `-f docker-compose.yml -f docker-compose.local.yml` 参数。
+
+### 5.3 启动 Langfuse、创建项目 Keys、加载网关
 
 ```bash
-curl -X POST http://127.0.0.1:9090/-/reload
+docker compose --env-file .env --env-file "$BUNDLE/images.env" up -d --pull never --no-build
+docker compose --env-file .env --env-file "$BUNDLE/images.env" ps -a
+docker compose --env-file .env --env-file "$BUNDLE/images.env" exec nginx nginx -t
 ```
 
-### 2. VM-03：导入 Grafana Dashboard
+首次全部启动是为了让 Nginx 能解析网关 / Langfuse 的内部 DNS 并提供 UI。网关回调懒初始化，项目 Keys 尚未补齐时**不要发送推理请求**。访问 `https://VM01:8444`，创建管理员、Organization / Project 和项目 Keys；没有预置默认管理员。离线采用本地账户 / 内部认证服务，不依赖公网 OAuth、邮件验证码或云端账户激活。
 
-打开 Grafana → Dashboards → New → Import → Upload JSON，选择 `grafana/dashboards/litellm-gpu-overview.json`，绑定已有 Prometheus 数据源并保存。该 JSON 包含：
+将项目 Keys 写入现场 `.env`，确认 `langfuse-worker` 正常消费，重新创建网关注入新环境：
 
-| 面板 | 监控指标 |
-|---|---|
-| 网关健康 | Target UP、QPS、错误率、并发请求 |
-| Token 与成本 | 输入/输出 Token 速率、24h 模型成本 |
-| IP 统计 | 24h 按 IP 请求数 Top20（不是按 IP Token） |
-| vLLM 推理性能 | TTFT P95、请求级 TPOT P95、KV Cache、运行请求 |
-| GPU | 利用率、显存、温度、功耗 |
-
-**指标口径：** `litellm_*_total` 是 Prometheus Counter 样本；不要查询 `_created`。TTFT/TPOT 的 vLLM Histogram 依赖当前引擎版本，SGLang、Strata 的对应指标需要在确认实际 Metrics 名称后补充。vLLM 的 ITL 不等同于请求级 TPOT。IP-Token 精确关联仍需 LiteLLM Callback + Langfuse 请求元数据，不能由 IP 请求排行榜代替。
-
-### 3. PromQL 验收
-
-```promql
-up{job="litellm"}
-sum(rate(litellm_proxy_total_requests_metric_total[5m]))
-sum by (requested_model) (rate(litellm_input_tokens_metric_total[5m]))
-sum by (requested_model) (rate(litellm_output_tokens_metric_total[5m]))
-topk(20, sum by (client_ip) (increase(litellm_proxy_total_requests_metric_total[24h])))
-DCGM_FI_DEV_GPU_UTIL
-{__name__="vllm:kv_cache_usage_perc"} * 100
+```bash
+docker compose --env-file .env --env-file "$BUNDLE/images.env" up -d \
+  --pull never --no-build --no-deps --force-recreate litellm
+docker compose --env-file .env --env-file "$BUNDLE/images.env" exec nginx nginx -t
+docker compose --env-file .env --env-file "$BUNDLE/images.env" exec nginx nginx -s reload
+curl --cacert /证书/internal-ca.crt -fsS https://VM01:8444/api/public/health
 ```
 
-### 4. 重要运维限制
+Nginx 当前使用静态 `proxy_pass` 主机名，重新创建网关后需 reload，重新解析可能变化的容器 IP；否则 UI 正常时 API 仍可能返回 502。后续重新创建其他上游服务时同样处理。
 
-- `/metrics` 可能需要 LiteLLM Bearer Token，Nginx 9401 的 IP 白名单与防火墙只是第二道控制；在 VM-02 测试 `curl -H "Authorization: Bearer ..."`。
-- `prometheus/litellm-scrape.yml` 的 IP 地址是示例值，必须替换成真实 VM 地址。
-- 生产中应将告警规则挂载到已有 Prometheus，并配置已有 Alertmanager 的 receiver；本仓库不覆盖原有告警路由。
-- 告警阈值为初始建议值，需按模型、GPU、业务并发基线调优。
-- 现有 Dashboard 不保证所有面板立即有数据；只有实际暴露的指标才会出现。
-- 默认不会将 Client IP 或 Request ID 作为新的高基数 Prometheus 自定义标签。
+检查 minio-init 退出码为 0、桶 `langfuse` 存在，PostgreSQL / Redis / ClickHouse 健康，Web / Worker 没有迁移或对象存储错误。迁移失败不能跳过健康检查继续称为成功。
+
+### 5.4 合并 Prometheus、导入 Grafana、部署补充 exporter
+
+1. 在 VM-02 合并 [scrape 配置](../prometheus/litellm-scrape.yml)，保留 `job_name: litellm`；修改地址、认证文件、GPU deployment 标签，删除未部署的引擎 job。Strata 必须使用 `/metrics?format=prometheus`，默认 JSON 不能按 Prometheus 文本抓取。
+2. 把 `recording-rules.yml` 和 `alerts.yml` 放入已有规则目录，并在主配置 `rule_files` 中加入；不要只加载告警而漏掉 `llm:*` recording rule。
+3. 凭据文件的路径、宿主权限和容器内 UID 可读性一致；推荐独立 secrets 目录，不将 Token 放入 PromQL。`promtool check rules` 与 `promtool check config` 通过后按现有方式 HUP / reload。
+4. 在 VM-03 导入 `grafana/dashboards/litellm-gpu-overview.json`，绑定已有 Prometheus 数据源；若 provisioning，保持 UID `litellm-gpu-overview`，确认自动加载目录 / 文件权限。
+5. 在可访问 Strata JSON 的主机部署 `exporters/strata_extra.py`，用离线 venv 的 prometheus-client 运行；设置 STRATA_METRICS_URL、STRATA_API_KEY、STRATA_EXPORTER_HOST 和端口 9402，注册 systemd 自动启动。仅向 Prometheus 开放。不是 Strata 的环境无需部署它。
+
+补充 exporter 的环境文件示例（现场私有文件）：
+
+```dotenv
+STRATA_METRICS_URL=http://GPU_VM:8008/metrics
+STRATA_API_KEY=现场密钥
+STRATA_EXPORTER_HOST=该主机可被Prometheus访问的地址
+STRATA_EXPORTER_PORT=9402
+STRATA_POLL_INTERVAL=3
+```
+
+systemd 的 ExecStart 使用目标 Python 的绝对路径和 exporter 源码绝对路径，EnvironmentFile 指向该私有文件。先以前台方式确认 9402 `/metrics` 中 `strata_extra_up=1`，再 enable 服务；不要原样运行本机路径固定的 `ops/deploy_wsl.py` 来覆盖多 VM 的现有配置。
+
+**Grafana 公式离线可读**：每个面板的信息说明已包含公式 / 单位 / 实际 PromQL，另随包提供 [完整公式文档](grafana-formulas.md)。看板顶部 GitHub 链接在断网时不可访问，不影响面板与嵌入公式；需要文档入口时改为内部文档站。
+
+## 6. 完全离线验收步骤与通过标准
+
+使用 [离线验收记录模板](offline-acceptance-template.md) 逐项保存证据。最终状态由实际结果填写，物料脚本始终输出 `deployment_accepted: false`，避免把哈希检查冒充全链路验收。
+
+### 6.1 包与系统
+
+- 目标机在开始安装前已禁止外网，内网白名单与出口日志有记录；使用的 OS / CPU / Python ABI / libc 与物料一致。
+- `SHA256SUMS` 全部通过；加载后每个离线镜像的完整 image ID 和架构与锁文件一致。
+- 空 venv 仅用本地 wheel 安装成功，`pip check` 通过；Tokenizer 无网初始化成功；容器内回调无网加载通过。
+- 容器启动统一使用 `--pull never --no-build`，日志 / 网络审计没有成功访问外部仓库、PyPI、Tokenizer / 模型站点。
+
+### 6.2 真实推理、Langfuse 与工具链
+
+先对部署矩阵里的**每个模型**完成一次非流式、一次带 usage 的流式请求，并等至少两次 scrape / recording rule 更新。记录真实请求 ID，不把模型列表或 readiness 200 当作推理成功。
+
+宿主验收用独立私有 `validation.env`，只含现有 Master Key、项目 Public / Secret Key，以及宿主可达的 Langfuse 地址；不用容器内部 `langfuse-web` 地址。导入企业 CA 后，运行：
+
+```bash
+PY=/opt/llm-observability/.venv/bin/python
+"$PY" ops/verify_runtime.py \
+  --env-file /私有目录/validation.env \
+  --gateway https://VM01:8443 --langfuse https://VM01:8444 \
+  --prometheus http://VM02:9090 --ca-file /证书/internal-ca.crt \
+  --model qwen-strata --required-job litellm --required-job strata --required-job strata-extra \
+  --exercise --output /验收目录/runtime-validation.json
+```
+
+`--model` 按实际别名；`--required-job` 重复填写本次必须存在且 UP 的 job。非 Strata 环境还需用 `--critical-panel` 替换默认 Strata 最近请求 / 缓存面板，例如 GPU 利用率、显存占用率、请求运行 / 排队等本次承诺的关键面板；不能为了让检查通过而略掉部署矩阵内必须有的 GPU / Token / 时延指标。
+
+工具执行验收使用真实模型与本地 add_numbers，客户端和网关必须在同一项目：
+
+```bash
+export SSL_CERT_FILE=/证书/internal-ca.crt
+export REQUESTS_CA_BUNDLE=/证书/internal-ca.crt
+export GATEWAY_URL=https://VM01:8443
+export GATEWAY_MODEL=qwen-strata
+# validation.env 中 LANGFUSE_HOST 使用 https://VM01:8444。
+"$PY" examples/traced_tool_agent.py --env-file /私有目录/validation.env
+# 将上一步输出的真实 trace_id 加到上述 verify_runtime.py 参数中：
+# --trace-id 实际traceID
+```
+
+必须看到同一 Trace 下的一个 AGENT、真实执行的 TOOL（17+25=42）、两次 GENERATION，input / output / parent / Session / User 齐全。仅 `tool_calls` 文本不算执行链通过。Langfuse v4 读 `/api/public/v2/observations`，字段组包含 `time,metrics`；旧 observations / traces 接口的 404 不是入库失败的证明。
+
+### 6.3 Grafana 指标与公式
+
+- 51 面板已导入、数据源有效；78 条 PromQL 查询全部执行成功，实际部署指标的关键序列为有限数值。未部署的可选引擎可无数据，但必需 job 不得缺失。
+- 网关有请求与输入 / 输出 Token 增量，真实流式有 TTFT / TPOT；Langfuse TTFT 与回调 metadata 一致，usage 互斥细分相加等于 raw total。
+- 公式已核查：`TPOT=(last-first)/(N−1)`；P95 来自合并 bucket；网关 Token/s 和 QPS 是固定 `[5m]`；VRAM 为 `100×used/total`；前缀 / MTP 用 Token 加权；MiB/s 乘 1048576；SSE 帧不当作 Token。
+- Strata context occupancy 与物理 KV 分开；Strata ITL 是按间隔数加权的平均值估计。空闲 / 冷启没有分位样本时保持无值，不强制补 0 秒。
+- 断开一个测试 exporter 验证 UP / 告警与恢复，只在实验环境执行；不修改现有 Alertmanager receiver。异常 / 中断请求在 Langfuse 可见，OTLP 失败 / 本地构造错误有记录。
+
+### 6.4 冷启动、持久化与恢复
+
+- 外网仍受限时重启测试主机 / WSL，确认 Docker / systemd 自动启动、模型可用、原有 Trace / 用户 / 仪表盘 / 数据不丢失；WSL 自动启动策略单独记录，不能把 Linux enable 当成 Windows 开机会自动启动 WSL。
+- 用新的请求再次验证推理、Langfuse、Token / TTFT / TPOT、GPU、缓存和工具链；没有首次请求下载依赖的等待或外网回退。
+- 实验环境执行一致性备份 / 恢复，使用原镜像锁、配置和加密键；确认历史 Trace 可查、模型路由可用。
+- 记录包版本 / checksum 摘要、实际镜像 ID、平台、CA、内网拓扑、请求 / Trace ID、全部报告和人工页面检查结果，才可签署“完全离线部署通过”。
+
+## 7. 备份、回滚和常见阻断
+
+迁移 / 升级前先保存原镜像锁、配置、证书、加密键和一致性数据备份。停写后再做 PostgreSQL / ClickHouse / Redis / MinIO 的一致性快照或使用各自原生备份。恢复时按原版本先依赖后应用，核对 UID/GID。不要在没有备份时执行 `down -v`、删除 data 或修改 ENCRYPTION_KEY。
+
+| 阻断 | 处理与重新验收 |
+| --- | --- |
+| 镜像 tag 存在但启动仍 pull | 统一使用生成的本地 images.env，完整 image ID 对比通过，所有 up 带 `--pull never --no-build` |
+| MinIO 报 sh 不存在 / 权限失败 | 发行版与 entrypoint 不兼容；联网准备机改为经过验证的镜像 / Compose，重新封包并冷装 |
+| 回调 import 缺 OTEL / Prometheus | 最终 LiteLLM 镜像未包含回调依赖；按其 Python / libc 构建，目标机不联网补包 |
+| 首次请求尝试下载编码器 | 缓存不完整 / 未挂入实际运行容器；准备机预热实际路径，再以 network none 重测 |
+| pip 缺包 / no matching distribution | wheelhouse 闭包、CPython、CPU 或 musl / glibc 不匹配；回准备机补齐，重新空 venv 验证 |
+| Langfuse UI 正常但没有 Trace | 检查 Worker、桶、OTLP v4 header、项目 Keys、LANGFUSE_HOST、回调错误指标；读取 v2 API |
+| 8443 / 8444 TLS 失败 | SAN、CA 链、时钟、Nginx 配置、客户端信任；验收不以 `-k` 跳过证书验证 |
+| Prometheus 403 / 401 | 分别核对 Nginx allow 的真实来源与 Bearer Token / 容器文件权限 |
+| Grafana 指标空白 | 先验证目标 UP、16 条规则、模型标签与数据源；可选 / 无流量指标和真正采集失败分开判定 |
+| 离线登录 / 媒体依赖公网 | 替换为本地账号、内部 DNS / NTP / CA / 对象存储，验证实际浏览器访问 |
+
+官方参考用于准备机选版本审计，实施时所需配置和说明必须已经在包中：
+
+- [Langfuse Compose 部署](https://langfuse.com/self-hosting/deployment/docker-compose)
+- [Langfuse 官方 Compose](https://github.com/langfuse/langfuse/blob/main/docker-compose.yml)（必须取选定发布对应内容，不能把最新 main 当兼容性锁）
+- [LiteLLM Prometheus](https://docs.litellm.ai/docs/proxy/prometheus)
+- [本仓库的实际配置修复与边界](observability-findings.md)
+
+**发布状态：本手册、物料锁定 / 校验工具和验收流程已提供；完整离线物料制作与干净断网机全链路验收仍需按本手册执行并保存记录。**
