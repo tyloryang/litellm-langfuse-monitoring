@@ -92,6 +92,8 @@ tests/test_observability.py            流式语义、父子关联、异常和�
 
 `ops/offline_bundle.py` 从本地镜像导出锁定别名，生成全物料 SHA-256 清单，并在离线导入后核对完整 image ID / 架构；它不访问镜像仓库。
 
+9 个核心镜像的默认获取来源已换成[渡渡鸟 DDN 镜像](docs/ddn-images.md)：`.env.example` 与 `offline/images.example.env` 使用已核查的 SWR 地址和固定 manifest digest，`offline/ddn-image-map.amd64.tsv` 提供完整映射。联网准备机可运行 `bash ops/pull-from-ddn.sh` 拉取，离线目标仍导入镜像包并使用本地锁定别名。当前清单针对 amd64，新装候选 Langfuse 为 Web / Worker 4.63.0；本机既有 4.73.0 的迁移与麒麟运行验收需单独处理。
+
 最终以干净麒麟目标机从冷安装起禁止互联网出口、完成真实推理、Langfuse 工具链、51 面板 / 78 查询、重启持久化及备份恢复为准。用 [离线验收记录模板](docs/offline-acceptance-template.md) 保存分项证据。**WSL 复用环境通过不代表麒麟已适配验收；具体 SP / Build / 架构的物料制作与断网冷装验收待执行。**
 
 当前网关回调按单 worker 验收；多 worker 的 Prometheus 聚合需要额外配置。vLLM / SGLang / DCGM 为预留兼容接入，本机没有部署这些目标。

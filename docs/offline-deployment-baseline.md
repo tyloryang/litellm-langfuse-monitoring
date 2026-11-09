@@ -14,7 +14,7 @@
 | 麒麟系统 | 已明确 RPM / YUM 交付路线 | 记录实际 SP / Build、内核 / glibc / 架构，锁定匹配的系统与 Docker 发行包 |
 | 看板 | 51 指标面板、78 查询、16 recording rule、9 告警已验证 | 目标 Prometheus / Grafana 配置与在线数据复核 |
 | Python | 直接依赖版本已列明 | 生成该目标平台的完整传递依赖锁与 wheelhouse，在空 venv 无网安装成功 |
-| 镜像 | 当前运行镜像可作为版本取证参考 | 选定全部 9 个兼容镜像、检查回调依赖和 MinIO shell 后锁 image ID 并导出 |
+| 镜像 | 9 个 DDN 来源、manifest digest 与 amd64 配置元数据已核查 | 验证整套候选版本、回调依赖与 MinIO shell 后锁 image ID 并导出 |
 | 全新离线部署 | **待验收** | 断网冷安装、冷启动、重启与持久化、回滚均通过 |
 
 ## 1. 部署范围与固定入口
@@ -97,15 +97,17 @@ fi
 
 **VM-01 共 9 个必需镜像，Nginx 与 MinIO Client 都要打包。** 初次创建桶的 `minio-init` 一样依赖镜像，不能只导出长期运行容器。
 
-| Compose 服务 | 典型来源 | 版本 / 兼容性要求 |
+以下列出上游项目标识用于归属核对；**实际拉取统一使用渡渡鸟 API 返回的 SWR 镜像地址**，完整地址与 digest 见 [DDN 镜像清单与版本说明](ddn-images.md)。`docker.aityp.com` 是索引 / API 站点，实际 registry 是 `swr.cn-north-4.myhuaweicloud.com/ddn-k8s/…`。
+
+| Compose 服务 | 上游项目标识 | 版本 / 兼容性要求 |
 | --- | --- | --- |
 | postgres | `postgres` | 固定具体 tag / digest；与 Langfuse 迁移版本配套；本机是 PostgreSQL 17 系列 |
 | clickhouse | `clickhouse/clickhouse-server` | 按该 Langfuse 发布版本的参考 Compose 验证；本机 26.3.62.3，旧示例 24.8 不是此次已验收版本 |
 | redis | `redis` | 固定具体版本或源 digest；密码 / AOF 配置匹配 |
 | minio | `minio/minio` 或经验证的替代发行版 | 本仓库 entrypoint 使用 `sh -c`，所选镜像必须有 `/bin/sh` 并兼容目录权限 / server 命令 |
 | minio-init | `minio/mc` | 含 `/bin/sh` 和 `mc`，与服务端兼容；验证创建桶 / 重复启动的幂等行为 |
-| langfuse-web | `docker.langfuse.com/langfuse/langfuse` | 与 Worker 使用同一发布版本；本机应用版本 4.73.0 |
-| langfuse-worker | `docker.langfuse.com/langfuse/langfuse-worker` | 同上；验证 PostgreSQL / ClickHouse 迁移与异步入库 |
+| langfuse-web | `docker.io/langfuse/langfuse` | DDN 新装候选 4.63.0，与 Worker 同版本 / revision；本机既有 4.73.0 不属于同一发行物 |
+| langfuse-worker | `docker.io/langfuse/langfuse-worker` | 同上；验证 PostgreSQL / ClickHouse 迁移与异步入库 |
 | litellm | `ghcr.io/berriai/litellm` 或自行构建的离线发行镜像 | 本机 1.106.6 是 venv，**尚无已验收的对应容器镜像**；需通过下文回调依赖检查 |
 | nginx | `nginx` | 本机缓存 `nginx:1.28-alpine`；正式包锁 image ID，验证 TLS 与 SSE |
 
@@ -113,7 +115,7 @@ fi
 
 当前 MinIO 运行的是 `cgr.dev/chainguard/minio`，其启动方式与仓库 MinIO shell 模板不同，**不能因为本机运行正常就直接替换 `MINIO_IMAGE`**。准备机必须验证所选 MinIO / mc 的 entrypoint 和权限，或提交一套相匹配的 Compose 配置后一起打包。
 
-镜像源清单模板：[offline/images.example.env](../offline/images.example.env)。它刻意保留待选版本，不能原样作为发布清单。镜像浮动源即使已下载，也要在导出时锁定 image ID；目标机仅使用本地离线别名，启动命令必须带 `--pull never --no-build`。
+镜像源清单模板：[offline/images.example.env](../offline/images.example.env)。9 个核心镜像已写入具体 tag 与 DDN manifest digest，当前只核查了 `linux/amd64` 元数据，尚未验收整套容器运行。Web / Worker 4.63.0 是站点现有的配对候选，本次未查到 4.73.0 的精确同步记录；**已有 4.73.0 数据不能直接套用此清单降级启动**。复用旧组件时保留其实际版本和数据，迁移方案另验收；新装先按下文测试再作为正式物料。离线目标仍使用本地锁定别名，启动命令必须带 `--pull never --no-build`。
 
 ### 2.3 Python 包、完整传递依赖和运行缓存
 
@@ -223,21 +225,12 @@ Compose RPM 不可用时，可把经验证的插件放入 `host/compose/docker-c
 ```bash
 cd /源码/litellm-langfuse-monitoring
 cp offline/images.example.env offline/images.local.env
-# 编辑所有 REPLACE；Web / Worker 同版本；先核对该发布的官方 Compose。
+# 核对已选定的 amd64 候选、同版官方 Compose；有改动时同步修改映射表。
 editor offline/images.local.env
-
-# 仅在联网准备阶段拉取。实际源如需镜像站，先确认 tag/digest 映射。
-"$PYTHON312" - <<'PY'
-import os, subprocess, sys
-from pathlib import Path
-sys.path.insert(0, "ops")
-from offline_bundle import image_env
-for image in image_env(Path("offline/images.local.env")).values():
-    subprocess.run(["docker", "pull", "--platform", os.environ["TARGET_PLATFORM"], image], check=True)
-PY
+bash ops/pull-from-ddn.sh offline/ddn-image-map.amd64.tsv "$TARGET_PLATFORM"
 ```
 
-若通过 DDN / 其他镜像站获取，参考 `ops/pull-from-ddn.sh` 的 TSV 映射接口。原脚本提到的示例 TSV 并未随本仓库提供，需要自己创建：每行“已验证镜像站引用 TAB 正式源引用”；不要把下载索引页面直接当作 Docker registry。
+仓库已提供 [完整 DDN 映射表](../offline/ddn-image-map.amd64.tsv)。第一行声明平台，后续每行“带 manifest digest 的 DDN 引用 TAB 上游引用”。脚本只从 DDN 拉取，再增加上游别名方便核对；不会回退上游公网仓库。镜像清单与映射表必须匹配；默认 amd64 表遇到 `TARGET_PLATFORM=linux/arm64` 会在拉取前拒绝。ARM 需先按 [DDN 说明](ddn-images.md) 查询并核查实际 arm64 地址 / digest，制作独立映射表和 images.local.env 后替换命令参数。
 
 **打包前先完成三类无网镜像检查**：
 
