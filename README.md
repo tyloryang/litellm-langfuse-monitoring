@@ -54,7 +54,7 @@ TPOT 使用成功流式请求的 `(最后输出时间 - 首次输出时间) / (c
 
 公式说明和看板由 `python ops/build_dashboard.py` 同时生成，保证文档中的 PromQL 与面板一致。
 
-来源 IP 在看板底部 **07 · 来源 IP 与 Token 用量** 查看，顶部“来源 IP”可筛选。Langfuse 的新 Trace / GENERATION Metadata 包含 `source_ip`、连接 peer 和判定来源。代理信任、NAT 限制、累计持久化与缺失历史的原因见 [来源 IP 统计说明](docs/source-ip-usage.md)。
+来源 IP 在看板底部 **07 · 来源 IP 与 Token 用量** 查看，顶部“来源 IP”可筛选。Langfuse 的新 Trace / GENERATION Metadata 包含 `source_ip`、连接 peer 和判定来源，Tracing 可用 `metadata.source_ip:实际IP` 筛选；当前 4.73.0 原生 Columns 不能把这个 Metadata key 配成独立 IP 列。采集链路、Langfuse 查看步骤、Token 分项对账、代理信任、NAT 限制和持久化见 [来源 IP 统计说明](docs/source-ip-usage.md)。
 
 ## Langfuse 改进
 

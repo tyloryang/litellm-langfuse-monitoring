@@ -15,6 +15,70 @@ Nginx 原来已经设置 `X-Real-IP` / `X-Forwarded-For`，但网关回调没有
 
 同时提供每个 IP 的输入 / 输出速率、缓存 / 推理速率、usage 缺失请求，以及账本持久化状态、开始时间和写入错误。正在执行的请求先建立零值序列，完成后才计入 Token；长请求未完成时零值不是用量丢失。
 
+## 按来源 IP 统计是怎样实现的
+
+```text
+客户端 → Nginx / 直连 → LiteLLM pre-call：校验来源、绑定 IP / 模型 / 内部请求 ID
+                             ↓ 请求到达终止回调
+                       读取模型响应中的真实 usage
+                             ├─ 去重 → SQLite 累计 → /metrics → Prometheus → Grafana
+                             └─ 来源 + usage → OTLP → Langfuse Trace / GENERATION
+```
+
+实现位于 [网关回调](../litellm/observability_callback.py)：
+
+1. `source_address()` 从连接 peer 和可信代理头确定来源；具体信任规则见下文。客户端不需要提交 IP。
+2. `async_pre_call_hook()` 保存此次请求的来源、请求模型和内部随机 ID，并预留零值序列；此时尚未结算 Token。
+3. `_record()` 在请求结束后调用 `normalize_usage()`，读取响应中的 `prompt_tokens` / `completion_tokens`，兼容 `input_tokens` / `output_tokens`。流式请求使用最终汇总响应的 usage，不按 SSE 帧数计算。
+4. `SourceUsageCollector.record()` 用内部请求 ID 防止重复结算，在 SQLite 事务内按 `(source_ip, model)` 累加输入、输出、缓存子集、推理子集及请求状态。账本不保存请求正文。
+5. `collect()` 把账本导出为 `llm_gateway_source_tokens_total{source_ip,model,token_type}` 等指标；[看板生成器](../ops/build_dashboard.py) 再按 IP 聚合选中的模型。Langfuse 与指标共用同一次回调确认的来源，Grafana 统计不依赖查询 Langfuse 数据库。
+
+例如测试请求的来源是 `127.0.0.2`，响应 usage 为输入 57、输出 28，则该 IP / 模型累计输入增加 57、输出增加 28、总量增加 85。重复终止回调不会再次增加同一笔用量。
+
+## Langfuse 中的来源字段与筛选
+
+**已经写入的是可查询的 Metadata 字段。** 本机 v4.73.0 OSS 已实测 Trace / GENERATION 详情和 Tracing 筛选；其他版本应在对应部署中核对 UI。
+
+| 字段 | 含义 |
+| --- | --- |
+| `source_ip` | 按可信代理规则确定的来源 IP，也是用量归属 IP |
+| `network_peer_ip` | 网关实际连接 peer；经过 Nginx 时通常为 Nginx 地址，无法获取时省略 |
+| `source_ip_origin` | `transport_peer` 为直连 peer；`trusted_forwarded_for` / `trusted_real_ip` 为已验证代理头；`unavailable` 为来源不可获取 |
+
+回调发送 `langfuse.observation.metadata`、`langfuse.trace.metadata`，并设置 OTLP `client.address`。测试请求在详情 **Attributes → Metadata** 中显示：
+
+```json
+{
+  "source_ip": "127.0.0.2",
+  "network_peer_ip": "127.0.0.2",
+  "source_ip_origin": "transport_peer"
+}
+```
+
+在 **Tracing → 左侧 Metadata → Add condition**，填写 key `source_ip`、运算符 `equals`、value 为实际 IP；该条件会同步为搜索表达式：
+
+```text
+metadata.source_ip:127.0.0.2
+```
+
+本机已验证该条件只返回对应测试请求（57 输入 / 28 输出 / 85 总量）。可收藏带筛选条件的地址，或使用 **My Views → Create Custom View** 保存常用条件；本次没有创建保存视图。Columns 中的 **Metadata** 显示整份对象，详情适合逐字段查看。
+
+**Metadata 字段不会自动变成独立列表列。** 当前 v4.73.0 的 Columns 菜单没有自定义 `metadata.source_ip` 列的入口。[该版本 EventsTable 源码](https://github.com/langfuse/langfuse/blob/v4.73.0/web/src/features/events/components/EventsTable.tsx#L1313) 注册的是整份 Metadata 列。若要求列表中单独显示名为“来源 IP”的列，需要扩展 Langfuse 前端的行值读取、列定义、默认顺序和可见性，并重新构建 Web 镜像；仅调整 LiteLLM 或环境变量不会生成这列。本次未修改 Langfuse 前端或数据库 schema。
+
+来源字段属于网关 GENERATION 的请求属性。一个 Agent Trace 可以包含来自不同服务的多次调用，应以各 GENERATION 的 `source_ip` 为准；客户端 SDK 创建的 AGENT / TOOL 节点如也要逐节点显示来源，需要在其实际执行位置单独采集，不能把网关的连接 IP 当成所有工具的执行来源。
+
+### 与 Langfuse Token 展示的对账口径
+
+网关账本使用供应商的包含子集的原始用量；Langfuse 的 usage 明细按互斥分项上报，原始值另存于 `metadata.usage_raw`：
+
+| 网关累计 / 原始 usage | 对应 Langfuse usage 明细 |
+| --- | --- |
+| 输入 `prompt_tokens` | `input + input_cached_tokens` |
+| 输出 `completion_tokens` | `output + output_reasoning_tokens` |
+| 总量 | 上述四项之和，即原始输入 + 原始输出 |
+
+例如原始输入 100（缓存 40）、输出 30（推理 10），Grafana 显示输入 100、输出 30、总量 130；Langfuse 明细为 `input=60`、`input_cached_tokens=40`、`output=20`、`output_reasoning_tokens=10`，总量同为 130。供应商未返回的缓存 / 推理细分不能推算；本例仅用于说明分项口径。
+
 ## 计算公式与统计口径
 
 令 `C(ip, model, type)` 为供应商返回 usage 经去重后写入的累计 Token。`input` 包含缓存读取，`output` 包含推理 Token；`input_cached`、`output_reasoning` 是子集，不能再次加入总量。
