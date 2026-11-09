@@ -1,18 +1,121 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="800" viewBox="0 0 1500 800">
-<style>text{font-family:Arial,"Noto Sans CJK SC",sans-serif;fill:#15283d} .box{fill:#f2f7ff;stroke:#3468a3;stroke-width:2;rx:14}.head{font-size:24px;font-weight:bold}.body{font-size:18px}.arrow{stroke:#2465b5;stroke-width:3;fill:none;marker-end:url(#arr)}.metric{stroke:#23885d;stroke-width:3;stroke-dasharray:8 6;fill:none;marker-end:url(#arr2)}</style>
-<defs><marker id="arr" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0 0 L9 3 L0 6Z" fill="#2465b5"/></marker><marker id="arr2" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0 0 L9 3 L0 6Z" fill="#23885d"/></marker></defs>
-<rect width="1500" height="800" fill="#fff"/><rect width="1500" height="70" fill="#173a70"/><text x="750" y="45" text-anchor="middle" font-size="30" font-weight="bold" fill="white">LiteLLM + Langfuse 离线生产监控拓扑</text>
-<rect class="box" x="35" y="170" width="220" height="130"/><text class="head" x="145" y="210" text-anchor="middle">客户端 / API</text><text class="body" x="145" y="250" text-anchor="middle">HTTPS / OpenAI API</text>
-<rect class="box" x="310" y="170" width="210" height="130"/><text class="head" x="415" y="210" text-anchor="middle">Nginx</text><text class="body" x="415" y="246" text-anchor="middle">IP / Request ID</text>
-<rect class="box" x="585" y="100" width="360" height="310"/><text class="head" x="765" y="142" text-anchor="middle">VM-01 网关与追踪</text><rect class="box" x="615" y="170" width="300" height="80"/><text class="head" x="765" y="220" text-anchor="middle">LiteLLM Gateway</text><rect class="box" x="615" y="275" width="300" height="95"/><text class="head" x="765" y="312" text-anchor="middle">Langfuse Web / Worker</text><text class="body" x="765" y="345" text-anchor="middle">Postgres / ClickHouse / Redis / MinIO</text>
-<rect class="box" x="1020" y="120" width="425" height="100"/><text class="head" x="1230" y="160" text-anchor="middle">VM-02 Prometheus（已有）</text><text class="body" x="1230" y="195" text-anchor="middle">LiteLLM / Engine / DCGM Metrics</text>
-<rect class="box" x="1020" y="280" width="425" height="100"/><text class="head" x="1230" y="322" text-anchor="middle">VM-03 Grafana（已有）</text><text class="body" x="1230" y="353" text-anchor="middle">Token / TTFT / TPOT / GPU / KV</text>
-<path class="arrow" d="M255 235 H310"/><path class="arrow" d="M520 235 H615"/><path class="arrow" d="M765 250 V275"/><path class="metric" d="M915 200 H1020"/><path class="metric" d="M1230 220 V280"/>
-<rect class="box" x="80" y="500" width="400" height="160"/><text class="head" x="280" y="545" text-anchor="middle">GPU VM-01 · vLLM</text><text class="body" x="280" y="585" text-anchor="middle">OpenAI API /metrics</text><text class="body" x="280" y="625" text-anchor="middle">DCGM Exporter :9400</text>
-<rect class="box" x="550" y="500" width="400" height="160"/><text class="head" x="750" y="545" text-anchor="middle">GPU VM-02 · SGLang</text><text class="body" x="750" y="585" text-anchor="middle">OpenAI API /metrics</text><text class="body" x="750" y="625" text-anchor="middle">DCGM Exporter :9400</text>
-<rect class="box" x="1020" y="500" width="400" height="160"/><text class="head" x="1220" y="545" text-anchor="middle">GPU VM-03 · Strata</text><text class="body" x="1220" y="585" text-anchor="middle">OpenAI API / 自定义 Exporter</text><text class="body" x="1220" y="625" text-anchor="middle">DCGM Exporter :9400</text>
-<path class="arrow" d="M680 410 V450 H280 V500"/><path class="arrow" d="M765 410 V500"/><path class="arrow" d="M850 410 V450 H1220 V500"/>
-<path class="metric" d="M280 500 V470 H1030 V220"/><path class="metric" d="M750 500 V470"/><path class="metric" d="M1220 500 V380"/>
-<text x="750" y="735" text-anchor="middle" font-size="20">实线：推理请求　　虚线：Prometheus 指标抓取　　Langfuse：请求级 Token / Trace / 成本</text>
-<text x="750" y="770" text-anchor="middle" font-size="17">GPU / KV Cache 内部指标必须由推理引擎或 Exporter 提供；Strata 需验证适配</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120" role="img" aria-labelledby="title desc">
+  <title id="title">LiteLLM / Langfuse / Strata 推理观测架构</title>
+  <desc id="desc">客户端经 Nginx 和 LiteLLM 请求推理引擎。自定义回调将来源和用量存入 SQLite，将 generation 上报 Langfuse，并导出指标。客户端另行上报真实 AGENT 和 TOOL。Prometheus 抓取网关、Strata 原生指标、JSON 补充导出器和可选硬件导出器；Grafana 查询 Prometheus。vLLM、SGLang 和 DCGM 为预留接入，本机未部署。</desc>
+  <defs>
+    <marker id="request-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#315c9b"/></marker>
+    <marker id="trace-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#7954a6"/></marker>
+    <marker id="metric-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#168267"/></marker>
+  </defs>
+  <style>
+    text { font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif; fill:#23374b; }
+    .canvas { fill:#f6f8fc; }
+    .group { fill:#fff; stroke:#c9d6e8; stroke-width:2; }
+    .box { fill:#edf3fc; stroke:#809ec6; stroke-width:2; }
+    .custom { fill:#eff9f4; stroke:#40947a; stroke-width:2; }
+    .tracing { fill:#f5effc; stroke:#ac91c7; stroke-width:2; }
+    .optional { fill:#fff; stroke:#9aaabc; stroke-width:2; stroke-dasharray:7 5; }
+    .title { font-size:32px; font-weight:700; fill:#fff; }
+    .subtitle { font-size:19px; fill:#d9e6f7; }
+    .heading { font-size:24px; font-weight:700; }
+    .body { font-size:20px; }
+    .small { font-size:18px; }
+    .label { font-size:18px; fill:#48617c; paint-order:stroke; stroke:#f6f8fc; stroke-width:7px; stroke-linejoin:round; }
+    .trace-label { fill:#7954a6; }
+    .metric-label { fill:#13755d; }
+    .request { stroke:#315c9b; stroke-width:3; fill:none; marker-end:url(#request-arrow); }
+    .trace { stroke:#7954a6; stroke-width:3; fill:none; marker-end:url(#trace-arrow); }
+    .metric { stroke:#168267; stroke-width:3; stroke-dasharray:8 6; fill:none; marker-end:url(#metric-arrow); }
+  </style>
+  <rect class="canvas" width="1800" height="1120"/>
+  <path d="M0 0 H1800 V110 H0Z" fill="#183857"/>
+  <text class="title" x="48" y="49">LiteLLM / Langfuse / Strata 推理观测架构</text>
+  <text class="subtitle" x="48" y="83">逻辑数据流 · Windows / WSL 已验证复用部署 · 麒麟 V10 离线新装仍需实机验收</text>
+
+  <rect class="group" x="545" y="140" width="510" height="460" rx="20"/>
+  <text class="heading" x="570" y="178">LiteLLM 网关与项目扩展</text>
+  <rect class="box" x="570" y="205" width="460" height="90" rx="12"/>
+  <text class="heading" x="800" y="243" text-anchor="middle">LiteLLM Gateway</text>
+  <text class="body" x="800" y="275" text-anchor="middle">模型路由 / 认证 / 原生指标</text>
+  <rect class="custom" x="570" y="355" width="460" height="100" rx="12"/>
+  <text class="heading" x="800" y="392" text-anchor="middle">自定义观测回调</text>
+  <text class="body" x="800" y="425" text-anchor="middle">来源校验 / usage / 计时 / 父链关联</text>
+  <rect class="custom" x="570" y="515" width="260" height="60" rx="12"/>
+  <text class="body" x="700" y="552" text-anchor="middle">SQLite 来源用量账本</text>
+  <rect class="custom" x="870" y="515" width="160" height="60" rx="12"/>
+  <text class="body" x="950" y="552" text-anchor="middle">/metrics</text>
+
+  <rect class="box" x="40" y="205" width="230" height="90" rx="12"/>
+  <text class="heading" x="155" y="243" text-anchor="middle">业务客户端 / Agent</text>
+  <text class="small" x="155" y="275" text-anchor="middle">真实工具执行与 SDK 埋点</text>
+  <rect class="box" x="325" y="205" width="165" height="90" rx="12"/>
+  <text class="heading" x="407" y="243" text-anchor="middle">Nginx</text>
+  <text class="small" x="407" y="275" text-anchor="middle">TLS / 覆盖转发头</text>
+  <path class="request" d="M270 250 H325"/>
+  <path class="request" d="M490 250 H570"/>
+  <text class="label" x="280" y="185">OpenAI API + traceparent</text>
+  <path class="request" d="M800 295 V355"/>
+  <text class="small" x="820" y="332">请求生命周期 hook</text>
+  <path class="request" d="M700 455 V515"/>
+  <text class="small" x="720" y="490">去重累计</text>
+  <path class="metric" d="M950 455 V515"/>
+  <path class="metric" d="M830 545 H870"/>
+
+  <rect class="box" x="1230" y="205" width="515" height="90" rx="12"/>
+  <text class="heading" x="1487" y="243" text-anchor="middle">推理引擎 · 本机 Strata</text>
+  <text class="body" x="1487" y="275" text-anchor="middle">vLLM / SGLang 可适配，本机未部署</text>
+  <path class="request" d="M1030 250 H1230"/>
+  <text class="label" x="1080" y="232">推理请求</text>
+  <rect class="custom" x="1370" y="355" width="375" height="100" rx="12"/>
+  <text class="heading" x="1557" y="392" text-anchor="middle">Strata JSON 补充导出器</text>
+  <text class="body" x="1557" y="425" text-anchor="middle">PCIe / 磁盘 / 缓存 / 最近请求</text>
+  <path class="metric" d="M1557 295 V355"/>
+  <text class="label metric-label" x="1575" y="332">Monitor JSON</text>
+
+  <rect class="group" x="40" y="650" width="1015" height="300" rx="20"/>
+  <text class="heading" x="65" y="690">Langfuse 追踪存储</text>
+  <rect class="tracing" x="75" y="730" width="435" height="170" rx="12"/>
+  <text class="heading" x="292" y="772" text-anchor="middle">Langfuse Web / Worker</text>
+  <text class="body" x="292" y="812" text-anchor="middle">Trace / Metadata / Session / User</text>
+  <text class="small" x="292" y="850" text-anchor="middle">来源写入 Metadata</text>
+  <text class="small" x="292" y="879" text-anchor="middle">独立 IP 列需另行适配前端</text>
+  <rect class="tracing" x="660" y="730" width="345" height="170" rx="12"/>
+  <text class="heading" x="832" y="772" text-anchor="middle">数据依赖</text>
+  <text class="body" x="832" y="820" text-anchor="middle">PostgreSQL / ClickHouse</text>
+  <text class="body" x="832" y="864" text-anchor="middle">Redis / MinIO</text>
+  <path class="trace" d="M510 815 H660"/>
+  <text class="small" x="550" y="795">持久化</text>
+  <path class="trace" d="M155 295 V620 H55 V710 H200 V730"/>
+  <text class="label trace-label" x="177" y="430">SDK 上报</text>
+  <text class="label trace-label" x="177" y="462">AGENT / TOOL</text>
+  <path class="trace" d="M570 405 H430 V605 H380 V730"/>
+  <text class="label trace-label" x="450" y="475">v4 OTLP 上报</text>
+  <text class="label trace-label" x="450" y="502">GENERATION + 来源</text>
+
+  <rect class="box" x="1190" y="650" width="555" height="105" rx="12"/>
+  <text class="heading" x="1467" y="691" text-anchor="middle">Prometheus</text>
+  <text class="body" x="1467" y="728" text-anchor="middle">主动抓取 / 16 条归一化规则 / 9 条告警</text>
+  <path class="metric" d="M950 575 V620 H1250 V650"/>
+  <text class="label metric-label" x="980" y="603">网关与来源指标</text>
+  <path class="metric" d="M1300 295 V650"/>
+  <text class="label metric-label" x="1080" y="500">原生 Prometheus 指标</text>
+  <path class="metric" d="M1467 455 V650"/>
+  <text class="label metric-label" x="1487" y="505">补充指标</text>
+  <rect class="optional" x="1540" y="530" width="205" height="80" rx="12"/>
+  <text class="body" x="1642" y="562" text-anchor="middle">可选硬件导出器</text>
+  <text class="small" x="1642" y="591" text-anchor="middle">例如 NVIDIA DCGM</text>
+  <path class="metric" d="M1642 610 V650"/>
+  <rect class="box" x="1190" y="830" width="555" height="120" rx="12"/>
+  <text class="heading" x="1467" y="873" text-anchor="middle">Grafana · 59 指标面板 / 7 分区</text>
+  <text class="body" x="1467" y="912" text-anchor="middle">94 查询 / 公式说明 / 来源 IP 用量</text>
+  <path class="metric" d="M1467 755 V830"/>
+  <text class="label metric-label" x="1487" y="800">Grafana 查询 PromQL 结果</text>
+
+  <path class="request" d="M50 1005 H105"/>
+  <text class="body" x="120" y="1012">请求 / 回调 / 持久化</text>
+  <path class="trace" d="M470 1005 H525"/>
+  <text class="body" x="540" y="1012">观测上报 / 追踪存储</text>
+  <path class="metric" d="M930 1005 H985"/>
+  <text class="body" x="1000" y="1012">指标数据流（Prometheus 主动抓取）</text>
+  <text class="small" x="50" y="1061">WSL：宿主 venv / 用户 systemd 运行网关与补充导出器，其余组件复用 Docker；图中节点不绑定固定 VM。</text>
+  <text class="small" x="50" y="1091">麒麟新装：Compose 模板默认复用内网 Prometheus、Grafana 和推理服务；需适配路径、版本、代理信任、数据卷与客户端埋点。</text>
 </svg>
