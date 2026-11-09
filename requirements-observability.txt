@@ -1,0 +1,6 @@
+# Versions already present and validated in the reused Ubuntu 24.04 WSL venv.
+litellm[proxy]==1.106.6
+langfuse==4.18.0
+prometheus-client==0.26.0
+opentelemetry-exporter-otlp-proto-http==1.45.2
+PyYAML>=6.0,<7

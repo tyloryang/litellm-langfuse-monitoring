@@ -31,4 +31,22 @@
       labels: {deployment: gpu-vm-02}
     - targets: ["10.0.0.13:9400"]
       labels: {deployment: gpu-vm-03}
-# Strata's /metrics is not assumed to exist. Add only after verifying an exporter.
+# Strata supports Prometheus via content negotiation or format=prometheus.
+# Its native metrics include GPU, TTFT and a weighted mean-gap ITL histogram.
+- job_name: strata
+  scrape_interval: 5s
+  metrics_path: /metrics
+  params:
+    format: [prometheus]
+  authorization:
+    type: Bearer
+    credentials_file: /etc/prometheus/secrets/strata_api_key
+  static_configs:
+    - targets: ["10.0.0.13:8008"]
+      labels: {engine: strata, deployment: gpu-vm-03}
+- job_name: strata-extra
+  scrape_interval: 5s
+  static_configs:
+    - targets: ["10.0.0.13:9402"]
+      labels: {engine: strata, deployment: gpu-vm-03}
+# Merge recording-rules.yml into rule_files as well as alerts.yml.

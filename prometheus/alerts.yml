@@ -27,22 +27,38 @@ groups:
   - name: inference-engines
     rules:
       - alert: InferenceExporterDown
-        expr: up{job=~"vllm|sglang|gpu-dcgm"} == 0
+        expr: up{job=~"vllm|sglang|gpu-dcgm|strata|strata-extra"} == 0
         for: 2m
         labels: {severity: warning}
         annotations:
           summary: "Inference/GPU exporter unreachable"
       - alert: VLLMHighKVCacheUsage
-        expr: vllm:kv_cache_usage_perc > 0.90
+        expr: vllm:kv_cache_usage_perc{job="vllm"} > 0.90
         for: 5m
         labels: {severity: warning}
         annotations:
           summary: "vLLM KV cache usage above 90%"
       - alert: GPUHighTemperature
-        expr: DCGM_FI_DEV_GPU_TEMP > 85
+        expr: llm:gpu_temperature_celsius > 85
         for: 5m
         labels: {severity: warning}
         annotations:
           summary: "GPU temperature above 85C"
+      - alert: StrataJSONPollFailed
+        expr: strata_extra_up == 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "Strata JSON telemetry unavailable; check auth and upstream"
+      - alert: GatewayObservationConstructionFailed
+        expr: increase(llm_gateway_observation_errors_total[5m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Gateway failed to construct Langfuse observations"
+      - alert: GatewayOTLPExportFailed
+        expr: increase(llm_gateway_otel_exports_total{status="failure"}[5m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Gateway OTLP export to Langfuse failed"
 # Alertmanager routing and notification receivers belong to your existing setup.
 # Thresholds are initial suggestions and require load testing.
