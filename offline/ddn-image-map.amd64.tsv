@@ -1,0 +1,11 @@
+# platform=linux/amd64
+# DDN manifest-pinned reference<TAB>upstream reference; checked 2026-11-09.
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/nginx:1.28-alpine@sha256:c958e0f81fac91f79df7dae348f21081074d09f38c08b80915c56ce00f8ebdf0	docker.io/library/nginx:1.28-alpine
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/postgres:17.11@sha256:209c91a7016d0aa2fafdc9e7ffb874e7c4efdb16156c9403c7bf5abc1384211c	docker.io/postgres:17.11
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/clickhouse/clickhouse-server:26.3.21.7@sha256:453aa5efa0365c635ee8d1e17f920aa3240a620b3dfb3613d4efeea50567d1db	docker.io/clickhouse/clickhouse-server:26.3.21.7
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/redis:7.4.11@sha256:56c2bc69a07736707708dc68f57298b5c4f2ec33621ef5cf961811245e12f90a	docker.io/redis:7.4.11
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z-cpuv1@sha256:f88e36e8cfcc0fc50c15b7cbeb3d3c3ad9f7df7eddd727de651442ba2f9863bb	docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z-cpuv1
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/minio/mc:RELEASE.2025-05-21T01-59-54Z-cpuv1@sha256:889094c3b5fd26aedeac14df7f94038363f0e71c2564992a7a051b7ae4600c94	docker.io/minio/mc:RELEASE.2025-05-21T01-59-54Z-cpuv1
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/langfuse/langfuse:4.63.0@sha256:5282a35ef872d3145471f72741eec28ad70f30871145f495f976bba4142116d4	docker.io/langfuse/langfuse:4.63.0
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/langfuse/langfuse-worker:4.63.0@sha256:a5595c298e97df2c672825e0f618aac9d87f5450657da2ce29efdd69c9ad3344	docker.io/langfuse/langfuse-worker:4.63.0
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/ghcr.io/berriai/litellm:v1.106.6@sha256:0603d327a724715b70161cd382142dab95ab7b6d56ee0005c3ef5b6a7adaa7fd	ghcr.io/berriai/litellm:v1.106.6
