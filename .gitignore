@@ -12,3 +12,6 @@ litellm/run-local.sh
 nginx/nginx.local.conf
 nginx/certs/
 docker-compose.local.yml
+offline/images.local.env
+offline-bundle/
+wheelhouse/

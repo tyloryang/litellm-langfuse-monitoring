@@ -5,6 +5,7 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -14,12 +15,17 @@ import uuid
 from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
+TLS_CONTEXT = None
+
+
+def open_request(req, timeout):
+    return urllib.request.urlopen(req, timeout=timeout, context=TLS_CONTEXT)
 
 
 def request(url, headers=None, body=None, timeout=20):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers or {})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
+    with open_request(req, timeout) as response:
         return json.load(response)
 
 
@@ -42,16 +48,23 @@ def raw_usage_from_metadata(metadata):
 
 
 def main():
+    global TLS_CONTEXT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, default=Path.home() / "litellm-langfuse-monitoring/.env")
     parser.add_argument("--prometheus", default="http://127.0.0.1:9090")
     parser.add_argument("--gateway", default="http://127.0.0.1:4000")
     parser.add_argument("--langfuse", default="http://127.0.0.1:3001")
+    parser.add_argument("--model", default="qwen-strata", help="Deployed gateway model for the real streaming request")
+    parser.add_argument("--required-job", action="append", help="Required Prometheus job; repeat to replace WSL defaults")
+    parser.add_argument("--critical-panel", action="append", help="Panel requiring finite data; repeat to replace Strata defaults")
+    parser.add_argument("--ca-file", type=Path, help="Trusted CA PEM for HTTPS endpoints; certificate verification stays enabled")
     parser.add_argument("--exercise", action="store_true", help="Run one small real streaming request")
     parser.add_argument("--trace-id", help="Validate an existing real agent/tool trace")
     parser.add_argument("--stream-trace-id", help="Validate a previously ingested streaming generation")
     parser.add_argument("--output", type=Path, default=ROOT / ".runtime/validation.json")
     args = parser.parse_args()
+    TLS_CONTEXT = ssl.create_default_context(cafile=str(args.ca_file)) if args.ca_file else None
+    required_jobs = set(args.required_job or ["litellm", "strata", "strata-extra"])
     env = dotenv_values(args.env_file)
     report = {"services": [], "targets": [], "queries": [], "failures": []}
     for name, url, headers in (
@@ -59,7 +72,7 @@ def main():
         ("langfuse", args.langfuse + "/api/public/health", {}),
     ):
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=10) as response:
+            with open_request(urllib.request.Request(url, headers=headers), 10) as response:
                 report["services"].append({"service": name, "status": response.status})
         except Exception as error:
             report["services"].append({"service": name, "error": str(error)})
@@ -68,9 +81,9 @@ def main():
     for target in targets:
         job = target["labels"]["job"]
         report["targets"].append({"job": job, "health": target["health"], "error": target["lastError"]})
-        if job in {"litellm", "strata", "strata-extra"} and target["health"] != "up":
+        if job in required_jobs and target["health"] != "up":
             report["failures"].append(f"Target {job}: {target['lastError']}")
-    for job in {"litellm", "strata", "strata-extra"} - {t["labels"]["job"] for t in targets}:
+    for job in required_jobs - {t["labels"]["job"] for t in targets}:
         report["failures"].append("Missing target " + job)
     dashboard = json.loads((ROOT / "grafana/dashboards/litellm-gpu-overview.json").read_text(encoding="utf-8"))
     queries = [(p["title"], t["expr"]) for p in dashboard["panels"] for t in p.get("targets", [])]
@@ -91,7 +104,7 @@ def main():
     with ThreadPoolExecutor(max_workers=6) as pool:
         report["queries"] = list(pool.map(query, queries))
     report["failures"].extend("PromQL: " + q["panel"] for q in report["queries"] if not q["ok"])
-    critical = ["GPU 利用率", "显存占用率", "最近 TTFT · 引擎", "最近 TPOT · 引擎均值", "请求运行 / 排队", "会话缓存容量 / 预算"]
+    critical = args.critical_panel or ["GPU 利用率", "显存占用率", "最近 TTFT · 引擎", "最近 TPOT · 引擎均值", "请求运行 / 排队", "会话缓存容量 / 预算"]
     for title in critical:
         if not any(q["panel"] == title and q.get("finite_series", 0) > 0 for q in report["queries"]):
             report["failures"].append("No finite data: " + title)
@@ -117,7 +130,7 @@ def main():
             report["failures"].append("Tool trace did not contain a complete, consistently parented real execution chain")
     if args.exercise:
         session = "monitoring-stream-" + uuid.uuid4().hex[:12]
-        body = {"model": "qwen-strata", "stream": True, "stream_options": {"include_usage": True},
+        body = {"model": args.model, "stream": True, "stream_options": {"include_usage": True},
                 "messages": [{"role": "user", "content": "Reply with the numbers 1 to 12, separated by spaces. No explanation."}],
                 "max_tokens": 128, "temperature": 0,
                 "metadata": {"session_id": session, "trace_user_id": "monitoring-validation", "trace_name": "stream-validation"}}
@@ -125,7 +138,7 @@ def main():
             headers={"Authorization": "Bearer " + env["LITELLM_MASTER_KEY"], "Content-Type": "application/json"})
         usage = None
         frames = 0
-        with urllib.request.urlopen(req, timeout=240) as response:
+        with open_request(req, 240) as response:
             for line in response:
                 if not line.startswith(b"data: ") or line[6:].strip() == b"[DONE]":
                     continue
