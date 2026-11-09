@@ -1,0 +1,48 @@
+groups:
+  - name: litellm-gateway
+    rules:
+      - alert: LiteLLMExporterDown
+        expr: up{job="litellm"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "LiteLLM metrics target unreachable"
+          description: "Prometheus cannot scrape {{ $labels.instance }} for 2m."
+      - alert: LiteLLMHighErrorRatio
+        expr: |
+          sum(rate(litellm_proxy_failed_requests_metric_total[5m]))
+          /
+          clamp_min(sum(rate(litellm_proxy_total_requests_metric_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "LiteLLM error ratio above 5%"
+      - alert: LiteLLMHighInFlight
+        expr: sum(litellm_in_flight_requests) > 100
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "LiteLLM in-flight requests exceed 100"
+  - name: inference-engines
+    rules:
+      - alert: InferenceExporterDown
+        expr: up{job=~"vllm|sglang|gpu-dcgm"} == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "Inference/GPU exporter unreachable"
+      - alert: VLLMHighKVCacheUsage
+        expr: vllm:kv_cache_usage_perc > 0.90
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "vLLM KV cache usage above 90%"
+      - alert: GPUHighTemperature
+        expr: DCGM_FI_DEV_GPU_TEMP > 85
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "GPU temperature above 85C"
+# Alertmanager routing and notification receivers belong to your existing setup.
+# Thresholds are initial suggestions and require load testing.
