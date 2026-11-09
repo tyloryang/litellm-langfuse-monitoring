@@ -1,0 +1,7 @@
+# platform=linux/amd64
+# Five same-version images verified against the existing WSL deployment on 2026-11-09.
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/prom/prometheus:v3.15.1@sha256:d445d1806b38f85b5c394a1b87f94113fde0473b45245922c2e8b1bd41fa68ae	docker.io/prom/prometheus:v3.15.1
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/grafana/grafana:13.3.0-distroless@sha256:ffa50e781972f7862410639eed96e0a9ad96c94ebeccd43e634141f3d9605a99	docker.io/grafana/grafana:13.3.0-distroless
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/postgres:17.11-trixie@sha256:ff48c61db40e00428013ab7e69e5963cebdb52021a71705725875b35ce0e5c34	docker.io/postgres:17.11-trixie
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/redis:7.4.12-bookworm@sha256:8b5b9ba0fb4f0d778473b12262d98fb3f24012f522732e0ab9232ae890e214cc	docker.io/library/redis:7.4.12-bookworm
+swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/nginx:1.28.3-alpine@sha256:e6b408afd0fcc6786c31e80825f4d2c6ca76934aa3e9280152addb23202ffd5d	docker.io/library/nginx:1.28.3-alpine

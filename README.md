@@ -6,6 +6,8 @@ LiteLLM 网关、Grafana 推理指标和 Langfuse 工具链路配置。**离线�
 
 本次复用既有 LiteLLM 虚拟环境、Strata 推理服务、Grafana、Prometheus、Langfuse 及其数据库和数据卷。新增一个轻量 Strata JSON 指标导出器，并更新网关回调、抓取规则和看板。
 
+后续已在 WSL 实际切换并重建 5 个同版本 DDN 容器：Prometheus 3.15.1、Grafana 13.3.0、PostgreSQL 17.11、Redis 7.4.12、Nginx 1.28.3。原数据与真实流式 / 工具链验证通过。Langfuse Web / Worker、ClickHouse、MinIO 因 DDN 缺少对应版本而保留原镜像，未降级。完整镜像摘要、数据保留证据和回退方式见 [WSL 渡渡鸟换源记录](docs/wsl-ddn-migration.md)。
+
 ## 本机入口
 
 | 服务 | Windows 访问地址 | 用途 |
