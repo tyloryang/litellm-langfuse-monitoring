@@ -5,10 +5,13 @@ replaces langfuse_otel; enabling both would export each generation twice.
 """
 
 import json
+import ipaddress
 import logging
 import os
+from pathlib import Path
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass, field
@@ -22,7 +25,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExportResult
 from opentelemetry.trace import NonRecordingSpan, SpanContext, Status, StatusCode, TraceFlags
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import REGISTRY, Counter, Gauge, Histogram
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 LOG = logging.getLogger("gateway.observability")
 LATENCY_BUCKETS = (.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 20, 40, 80, 160, 320, 640, 1800)
@@ -39,8 +43,153 @@ COMPLETIONS = Counter("llm_gateway_completions", "Completed requests, including 
 PRICING = Counter("llm_gateway_unpriced_requests", "Requests without configured per-token prices.", LABELS)
 OTLP_RESULTS = Counter("llm_gateway_otel_exports", "OTLP HTTP batch export results.", ("status",))
 OTLP_LAST_SUCCESS = Gauge("llm_gateway_otel_last_success_timestamp_seconds", "Most recent successful OTLP export.")
+SOURCE_USAGE_ERRORS = Counter("llm_gateway_source_usage_errors", "Source IP accounting write failures.")
 for export_status in ("success", "failure"):
     OTLP_RESULTS.labels(export_status).inc(0)
+
+
+def canonical_ip(value):
+    """Accept IP literals only; normalize IPv4-mapped IPv6 without trusting text labels."""
+    try:
+        address = ipaddress.ip_address(str(value).strip())
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            address = address.ipv4_mapped
+        return str(address)
+    except ValueError:
+        return None
+
+
+def source_address(metadata, headers, trusted_cidrs=None):
+    # LiteLLM fills requester_ip_address from request.client.host. Keep
+    # general_settings.use_x_forwarded_for=false and FORWARDED_ALLOW_IPS empty
+    # so this value remains the transport peer used for the trust decision.
+    peer = canonical_ip(metadata.get("requester_ip_address"))
+    if not peer:
+        return {"source_ip": "unknown", "source_ip_origin": "unavailable"}
+    trusted_cidrs = os.getenv("GATEWAY_TRUSTED_PROXY_CIDRS", "") if trusted_cidrs is None else trusted_cidrs
+    networks = [ipaddress.ip_network(value.strip(), strict=False) for value in trusted_cidrs.split(",") if value.strip()]
+
+    def trusted(value):
+        address = ipaddress.ip_address(value)
+        return any(address.version == network.version and address in network for network in networks)
+
+    result = {"source_ip": peer, "network_peer_ip": peer, "source_ip_origin": "transport_peer"}
+    if not trusted(peer):
+        return result
+    forwarded = headers.get("x-forwarded-for", "")
+    if forwarded:
+        chain = [canonical_ip(part) for part in forwarded.split(",")]
+        if len(chain) > 16 or not all(chain):
+            return result
+        # Remove trusted hops from the right; a client-controlled leftmost
+        # value must never override a nearer, untrusted hop.
+        for address in reversed(chain):
+            result.update(source_ip=address, source_ip_origin="trusted_forwarded_for")
+            if not trusted(address):
+                break
+    elif canonical_ip(headers.get("x-real-ip")):
+        result.update(source_ip=canonical_ip(headers["x-real-ip"]), source_ip_origin="trusted_real_ip")
+    return result
+
+
+class SourceUsageCollector:
+    """Durable, bounded per-source counters; no prompts, headers or API keys."""
+
+    def __init__(self, path=None, max_series=None):
+        self.path = path
+        self.max_series = max_series
+        self.connection = None
+        self.lock = threading.RLock()
+
+    def _db(self):
+        if self.connection is None:
+            self.path = self.path or os.getenv("GATEWAY_SOURCE_USAGE_DB", ":memory:")
+            self.max_series = max(1, int(self.max_series or os.getenv("GATEWAY_SOURCE_MAX_SERIES", "1024")))
+            if self.path != ":memory:":
+                path = Path(self.path)
+                path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.connection = sqlite3.connect(self.path, check_same_thread=False, timeout=10)
+            if self.path != ":memory:":
+                Path(self.path).chmod(0o600)
+            self.connection.execute("PRAGMA journal_mode=WAL")
+            self.connection.executescript("""
+                CREATE TABLE IF NOT EXISTS source_totals (
+                    source_ip TEXT NOT NULL, model TEXT NOT NULL,
+                    input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0,
+                    input_cached INTEGER NOT NULL DEFAULT 0, output_reasoning INTEGER NOT NULL DEFAULT 0,
+                    success INTEGER NOT NULL DEFAULT 0, error INTEGER NOT NULL DEFAULT 0,
+                    missing INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(source_ip, model));
+                CREATE TABLE IF NOT EXISTS processed_requests (request_id TEXT PRIMARY KEY, recorded_at REAL NOT NULL);
+                CREATE INDEX IF NOT EXISTS processed_age ON processed_requests(recorded_at);
+                CREATE TABLE IF NOT EXISTS accounting_meta (key TEXT PRIMARY KEY, value REAL NOT NULL);
+            """)
+            with self.connection:
+                self.connection.execute("INSERT OR IGNORE INTO accounting_meta VALUES ('started', ?)", (time.time(),))
+        return self.connection
+
+    def _reserve(self, source_ip, model):
+        db = self._db()
+        if not db.execute("SELECT 1 FROM source_totals WHERE source_ip=? AND model=?", (source_ip, model)).fetchone():
+            count = db.execute("SELECT count(*) FROM source_totals WHERE source_ip != 'overflow'").fetchone()[0]
+            if count >= self.max_series:
+                source_ip, model = "overflow", "all"
+            db.execute("INSERT OR IGNORE INTO source_totals(source_ip, model) VALUES (?, ?)", (source_ip, model))
+        return source_ip, model
+
+    def prepare(self, source_ip, model):
+        with self.lock:
+            db = self._db()
+            with db:
+                self._reserve(source_ip, model)
+
+    def record(self, request_id, source_ip, model, raw, failed=False):
+        prompt, completion = raw.get("prompt_tokens", raw.get("input_tokens")), raw.get("completion_tokens", raw.get("output_tokens"))
+        measured = all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in (prompt, completion))
+        cached = as_dict(raw.get("prompt_tokens_details", raw.get("input_tokens_details"))).get("cached_tokens", 0)
+        reasoning = as_dict(raw.get("completion_tokens_details", raw.get("output_tokens_details"))).get("reasoning_tokens", 0)
+        def subset(value, total):
+            return min(value, total) if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+        values = (prompt, completion, subset(cached, prompt), subset(reasoning, completion)) if measured else (0, 0, 0, 0)
+        with self.lock:
+            db = self._db()
+            with db:
+                inserted = db.execute("INSERT OR IGNORE INTO processed_requests VALUES (?, ?)", (request_id, time.time())).rowcount
+                if not inserted:
+                    return
+                source_ip, model = self._reserve(source_ip, model)
+                db.execute("""UPDATE source_totals SET input=input+?, output=output+?,
+                    input_cached=input_cached+?, output_reasoning=output_reasoning+?,
+                    success=success+?, error=error+?, missing=missing+? WHERE source_ip=? AND model=?""",
+                    (*values, int(not failed), int(failed), int(not measured), source_ip, model))
+                db.execute("DELETE FROM processed_requests WHERE recorded_at < ?", (time.time() - 86400,))
+
+    def describe(self):
+        # Avoid touching a database during import / callback loader validation.
+        return [CounterMetricFamily("llm_gateway_source_tokens", "Provider token usage by source IP.", labels=["source_ip", "model", "token_type"]),
+                CounterMetricFamily("llm_gateway_source_requests", "Completed requests by source IP.", labels=["source_ip", "model", "status"]),
+                CounterMetricFamily("llm_gateway_source_usage_missing", "Requests without complete token usage.", labels=["source_ip", "model"]),
+                GaugeMetricFamily("llm_gateway_source_tracking_started_timestamp_seconds", "Source accounting start time."),
+                GaugeMetricFamily("llm_gateway_source_usage_persistent", "1 if source counters use a persistent database.")]
+
+    def collect(self):
+        with self.lock:
+            db = self._db()
+            rows = db.execute("SELECT * FROM source_totals ORDER BY source_ip, model").fetchall()
+            started = db.execute("SELECT value FROM accounting_meta WHERE key='started'").fetchone()[0]
+        tokens, requests, missing, start, persistent = self.describe()
+        for source_ip, model, inp, out, cached, reasoning, success, error, absent in rows:
+            for kind, value in zip(("input", "output", "input_cached", "output_reasoning"), (inp, out, cached, reasoning)):
+                tokens.add_metric([source_ip, model, kind], value)
+            requests.add_metric([source_ip, model, "success"], success)
+            requests.add_metric([source_ip, model, "error"], error)
+            missing.add_metric([source_ip, model], absent)
+        start.add_metric([], started)
+        persistent.add_metric([], int(self.path != ":memory:"))
+        yield from (tokens, requests, missing, start, persistent)
+
+
+SOURCE_USAGE = SourceUsageCollector()
+REGISTRY.register(SOURCE_USAGE)
 
 
 class MonitoredOTLPExporter(OTLPSpanExporter):
@@ -135,16 +284,19 @@ class RequestState:
     headers: dict = field(default_factory=dict)
     messages: object = None
     tools: object = None
+    source: dict = field(default_factory=lambda: {"source_ip": "unknown", "source_ip_origin": "unavailable"})
+    accounting_id: str = field(default_factory=lambda: secrets.token_hex(16))
 
 
 class GatewayObservability(CustomLogger):
-    def __init__(self):
+    def __init__(self, source_usage=None):
         super().__init__()
         self.states = {}
         self.lock = threading.Lock()
         self.finished = {}
         self.provider = None
         self.tracer = None
+        self.source_usage = source_usage or SOURCE_USAGE
 
     def _get_tracer(self):
         if self.tracer is None:
@@ -189,9 +341,16 @@ class GatewayObservability(CustomLogger):
                 metadata[name] = headers[header]
         if data.get("user") and not metadata.get("trace_user_id"):
             metadata["trace_user_id"] = data["user"]
-        # Request IDs and client IPs belong in trace metadata, never metric labels.
+        source = source_address(metadata, headers)
+        # Reserve only validated IP literals under a bounded cardinality cap.
+        # Client-supplied metadata.source_ip is never used for accounting.
+        try:
+            self.source_usage.prepare(source["source_ip"], str(metadata["requested_model"]))
+        except Exception:
+            SOURCE_USAGE_ERRORS.inc()
+            LOG.exception("Cannot prepare source IP accounting")
         state = RequestState(streaming=bool(data.get("stream")), metadata=dict(metadata), headers=headers,
-                             messages=data.get("messages", data.get("input")), tools=data.get("tools"))
+                             messages=data.get("messages", data.get("input")), tools=data.get("tools"), source=source)
         key = self._key(data) or request_id
         with self.lock:
             cutoff = time.perf_counter() - 7200
@@ -264,6 +423,11 @@ class GatewayObservability(CustomLogger):
         E2E.labels(model, str(state.streaming).lower()).observe(elapsed)
         COMPLETIONS.labels(model, "error" if error else "success").inc()
         raw, usage, tokens = normalize_usage(response)
+        try:
+            self.source_usage.record(state.accounting_id, state.source["source_ip"], model, raw, failed=bool(error))
+        except Exception:
+            SOURCE_USAGE_ERRORS.inc()
+            LOG.exception("Cannot persist source IP usage")
         tpot, reason = tpot_value(state.first, state.last, tokens, state.frames, state.streaming)
         if error:
             tpot, reason = None, "failed"
@@ -284,6 +448,7 @@ class GatewayObservability(CustomLogger):
         # Only accept curated metadata, not the LiteLLM internal dict (which can
         # contain request headers, credentials or unserializable SDK objects).
         metadata = {k: state.metadata[k] for k in ("gateway_request_id", "trace_name", "session_id", "trace_user_id", "tags") if k in state.metadata}
+        metadata.update(state.source)
         metadata.update({"usage_raw": raw, "timing_source": "gateway_stream_iterator", "stream_output_frames": state.frames,
                          "upstream_model": kwargs.get("model"),
                          "reasoning_usage_available": "reasoning_tokens" in as_dict(raw.get("completion_tokens_details", raw.get("output_tokens_details"))),
@@ -301,6 +466,8 @@ class GatewayObservability(CustomLogger):
         attributes = {"langfuse.observation.type": "generation", "langfuse.observation.model.name": model,
                       "langfuse.observation.input": dumps(state.messages), "langfuse.observation.output": dumps(output),
                       "langfuse.observation.metadata": dumps(metadata),
+                      "langfuse.trace.metadata": dumps(state.source),
+                      "client.address": state.source["source_ip"],
                       "langfuse.environment": os.getenv("LANGFUSE_TRACING_ENVIRONMENT", "wsl-local")}
         if state.tools:
             attributes["langfuse.observation.metadata.tools"] = dumps(state.tools)

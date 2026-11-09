@@ -13,12 +13,13 @@
 | TPOT 易算错 | SSE 帧数不等于 Token，role / 空帧也不是首输出 | 识别内容、推理、工具增量，使用最终 usage 作分母 |
 | Strata KV 指标被当作物理显存 | 兼容名称 `vllm:kv_cache_usage_perc` 实际是上下文位置占用 | 独立展示 Strata context；物理 KV 面板与 vLLM KV 告警限定对应引擎 |
 | 吞吐单位偏差 | PCIe / 磁盘 `_mb` 字段实际是 MiB/s | 乘 1048576 后按 B/s 展示 |
+| 来源 IP / 按 IP Token 缺失 | Nginx 有转发头，但回调未导出来源；旧 Token 指标没有 IP 维度 | 校验连接与可信代理，写入 Langfuse metadata、SQLite 用量账本与第 07 分区 |
 
 JSON 导出器每 3 秒轮询，Prometheus 每 5 秒抓取 Strata。轮询失败即清空旧数据、置 `strata_extra_up=0`；最后成功时间用于判断数据年龄。
 
 ## 指标参考与口径
 
-**各面板计算公式见 [Grafana 看板计算公式与统计口径](grafana-formulas.md)**：包含全部 51 面板的原始计算、78 条实际 PromQL、固定 / 动态窗口、聚合权重及单位换算，同步显示在 Grafana 面板说明中。
+**各面板计算公式见 [Grafana 看板计算公式与统计口径](grafana-formulas.md)**：包含全部 59 面板的原始计算、94 条实际 PromQL、固定 / 动态窗口、聚合权重及单位换算，同步显示在 Grafana 面板说明中。
 
 GitHub star 是 2026-11-09 API 快照，用于选择生态参考：
 
@@ -49,7 +50,7 @@ GitHub star 是 2026-11-09 API 快照，用于选择生态参考：
 | 工具提议 | 模型输出 `tool_calls` 数 | 不代表已执行，执行结果到 Langfuse TOOL 查看 |
 | 成本 | 可选真实 USD / Token 价格 | 本地模型默认 unconfigured，0 不代表免费 |
 
-物理服务器还可经 DCGM 增加 SM / Tensor 活跃度、DRAM 活跃度、PCIe / NVLink、ECC / XID 等诊断。本机 Strata / WSL 未提供的字段不伪造。本次实际接入 51 个指标面板，6 个 row 仅为分隔。
+物理服务器还可经 DCGM 增加 SM / Tensor 活跃度、DRAM 活跃度、PCIe / NVLink、ECC / XID 等诊断。本机 Strata / WSL 未提供的字段不伪造。增加来源 IP 统计后实际接入 59 个指标面板，7 个 row 仅为分隔。
 
 P50 / P95 / P99 是抓取窗口中 histogram 的分位估计，少样本时受 bucket 精度限制。重启后只抓到第一条 counter 样本，或窗口内没有新请求时，速率 / 分位可以没有值；最近请求引擎值仍保留，不能填成 0 延迟。vLLM / SGLang KV 面板在本机 Strata 单引擎环境无数据是预期行为。
 
@@ -118,7 +119,11 @@ v2 查询还需显式选择字段组。只取 `core,basic,io,usage,metadata,mode
 
 失败和流式中断记录 ERROR，TPOT 排除失败样本并标记原因。终止回调去重以避免重复 generation。本地构造错误、远程 OTLP 成功 / 失败和最后成功时间都有指标与告警。异步队列极端过载丢弃还需结合日志，未做压力验收。
 
-## 本机验收证据
+## 来源 IP 与用量补充
+
+新增 `source_ip`、`network_peer_ip`、`source_ip_origin` 到 GENERATION / Trace metadata；按来源和模型累计真实 usage。`general_settings.use_x_forwarded_for=false` 与空 `FORWARDED_ALLOW_IPS` 保留连接 peer，`GATEWAY_TRUSTED_PROXY_CIDRS` 只信任明确代理；Nginx 覆盖客户端转发头。累计值写入 SQLite，所选时段用 Prometheus `increase` 外推，缓存 / 推理是输入 / 输出子集，不能重复相加。历史没有来源的请求无法准确补回。配置、公式、查看位置和恢复步骤见 [来源统计说明](source-ip-usage.md)。
+
+## 本机初次验收证据（增加来源 IP 之前）
 
 - `litellm`、`prometheus`、`strata`、`strata-extra` 四个目标 UP；配置、16 条 recording rule、9 条 alert rule 均通过 `promtool`。
 - 78 条面板 PromQL 均在真实 Prometheus 上成功执行；GPU、显存、引擎时延、并发和会话缓存有采样，已检查 Grafana 页面。

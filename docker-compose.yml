@@ -118,9 +118,13 @@ services:
     restart: unless-stopped
     depends_on: [langfuse-web]
     env_file: [.env]
+    environment:
+      FORWARDED_ALLOW_IPS: ""
+      GATEWAY_SOURCE_USAGE_DB: /var/lib/llm-observability/usage.sqlite3
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
       - ./litellm/observability_callback.py:/app/observability_callback.py:ro
+      - ./data/source-usage:/var/lib/llm-observability
     command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
     expose: ["4000"]
     networks: [backend]

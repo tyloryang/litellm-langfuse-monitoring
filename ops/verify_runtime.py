@@ -3,6 +3,7 @@
 import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
+import ipaddress
 import json
 from pathlib import Path
 import ssl
@@ -61,6 +62,8 @@ def main():
     parser.add_argument("--exercise", action="store_true", help="Run one small real streaming request")
     parser.add_argument("--trace-id", help="Validate an existing real agent/tool trace")
     parser.add_argument("--stream-trace-id", help="Validate a previously ingested streaming generation")
+    parser.add_argument("--source-trace-id", help="Validate source IP metadata and persisted Prometheus usage for an existing trace")
+    parser.add_argument("--expected-source-ip", help="Expected gateway-visible source for --source-trace-id")
     parser.add_argument("--output", type=Path, default=ROOT / ".runtime/validation.json")
     args = parser.parse_args()
     TLS_CONTEXT = ssl.create_default_context(cafile=str(args.ca_file)) if args.ca_file else None
@@ -91,7 +94,7 @@ def main():
     def query(item):
         title, expr = item
         expr = expr.replace("$__rate_interval", "1m").replace("$__range", "1h")
-        for name in ("gateway_model", "engine_model", "deployment", "gpu"):
+        for name in ("gateway_model", "engine_model", "deployment", "gpu", "source_ip"):
             expr = expr.replace("$" + name, ".*")
         try:
             result = request(args.prometheus + "/api/v1/query?" + urllib.parse.urlencode({"query": expr}))
@@ -115,6 +118,45 @@ def main():
             # v4 omits timing/computed fields unless explicitly selected. A
             # missing field in a partial API response is not missing telemetry.
             {"limit": 100, "fields": "core,basic,time,metrics,io,usage,metadata,model", **filters}), auth)["data"]
+
+    if args.source_trace_id:
+        rows = [o for o in observations(traceId=args.source_trace_id)
+                if o["traceId"] == args.source_trace_id and o["type"] == "GENERATION"]
+        checks = []
+
+        def prom_value(expression):
+            result = request(args.prometheus + "/api/v1/query?" + urllib.parse.urlencode({"query": expression}))["data"]["result"]
+            return float(result[0]["value"][1]) if result else None
+
+        for item in rows:
+            metadata = item.get("metadata") or {}
+            source, model = metadata.get("source_ip"), item.get("model")
+            raw = raw_usage_from_metadata(metadata) or {}
+            try:
+                source = str(ipaddress.ip_address(source))
+                valid = not args.expected_source_ip or source == str(ipaddress.ip_address(args.expected_source_ip))
+            except ValueError:
+                checks.append({"source_ip": source, "validated": False})
+                continue
+            if not isinstance(model, str):
+                valid = False
+            totals = {}
+            for kind, key, fallback in (("input", "prompt_tokens", "input_tokens"), ("output", "completion_tokens", "output_tokens")):
+                measured = raw.get(key, raw.get(fallback))
+                selector = "{source_ip=" + json.dumps(source) + ",model=" + json.dumps(model) + ",token_type=" + json.dumps(kind) + "}"
+                value = prom_value("sum(llm_gateway_source_tokens_total" + selector + ")") if isinstance(model, str) else None
+                totals[kind] = value
+                valid = valid and isinstance(measured, int) and not isinstance(measured, bool) and measured >= 0 and value is not None and value >= measured
+            checks.append({"source_ip": source, "network_peer_ip": metadata.get("network_peer_ip"),
+                           "source_ip_origin": metadata.get("source_ip_origin"), "cumulative_tokens": totals,
+                           "validated": bool(valid)})
+        persistent = prom_value("min(llm_gateway_source_usage_persistent)")
+        errors = prom_value("sum(llm_gateway_source_usage_errors_total)")
+        valid = bool(checks) and all(c["validated"] for c in checks) and persistent == 1 and errors == 0
+        report["source_usage"] = {"trace_id": args.source_trace_id, "generations": checks,
+                                  "persistent": persistent, "write_errors": errors, "validated": valid}
+        if not valid:
+            report["failures"].append("Source IP metadata / persistent accounting did not validate (allow at least two scrapes)")
 
     if args.trace_id:
         rows = [o for o in observations(traceId=args.trace_id) if o["traceId"] == args.trace_id]
@@ -184,7 +226,7 @@ def main():
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"services": report["services"], "targets": report["targets"], "queries": len(report["queries"]),
                       "queries_with_data": sum(q.get("finite_series", 0) > 0 for q in report["queries"]),
-                      "tool_chain": report.get("tool_chain"), "stream": report.get("stream"),
+                      "tool_chain": report.get("tool_chain"), "stream": report.get("stream"), "source_usage": report.get("source_usage"),
                       "failures": report["failures"], "report": str(args.output)}, ensure_ascii=False, indent=2))
     if report["failures"]:
         raise SystemExit(1)

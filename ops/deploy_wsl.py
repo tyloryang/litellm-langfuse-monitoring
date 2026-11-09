@@ -13,6 +13,7 @@ import os
 import re
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import time
 import urllib.request
@@ -39,6 +40,7 @@ def main():
     parser.add_argument("--runtime-root", type=Path, default=Path.home() / "litellm-langfuse-monitoring")
     parser.add_argument("--prometheus", default="llm-observability-prometheus")
     parser.add_argument("--grafana", default="llm-observability-grafana")
+    parser.add_argument("--nginx", default="llm-gateway-nginx")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     runtime = args.runtime_root.resolve()
@@ -55,6 +57,11 @@ def main():
     dashboard_dir = provisioning / Path(provider_data["providers"][0]["options"]["path"]).relative_to("/etc/grafana/provisioning")
     networks = prom["NetworkSettings"]["Networks"]
     gateway = next(v["Gateway"] for v in networks.values() if v.get("Gateway"))
+    nginx = inspect(args.nginx)
+    proxy_addresses = [value["IPAddress"] + "/32" for name, value in nginx["NetworkSettings"]["Networks"].items()
+                       if name in networks and value.get("IPAddress")]
+    if not proxy_addresses:
+        raise RuntimeError("Cannot discover trusted Nginx address on the existing observability network")
     venv_python = Path.home() / "llm-observability/.venv/bin/python"
     if not venv_python.exists():
         raise RuntimeError("Expected reused LiteLLM virtualenv was not found")
@@ -96,15 +103,33 @@ def main():
     get_instance_fn(value="observability_callback.observability", config_file_path=str(config_path))
     runtime_env = runtime / ".env"
     env_text = runtime_env.read_text()
-    for key, value in {"LITELLM_OTEL_V2": "false", "LITELLM_LOCAL_MODEL_COST_MAP": "True"}.items():
+    usage_db = runtime / "data/source-usage/usage.sqlite3"
+    if usage_db.exists():
+        target = backup / "source-usage.sqlite3"
+        with sqlite3.connect(usage_db) as source_db, sqlite3.connect(target) as target_db:
+            source_db.backup(target_db)
+        target.chmod(0o600)
+    for key, value in {"LITELLM_OTEL_V2": "false", "LITELLM_LOCAL_MODEL_COST_MAP": "True",
+                       "FORWARDED_ALLOW_IPS": "''", "GATEWAY_TRUSTED_PROXY_CIDRS": ",".join(proxy_addresses),
+                       "GATEWAY_SOURCE_USAGE_DB": str(usage_db)}.items():
         line = key + "=" + value
         env_text = re.sub(r"(?m)^" + key + r"=.*$", line, env_text) if re.search(r"(?m)^" + key + "=", env_text) else env_text.rstrip() + "\n" + line + "\n"
     put(runtime_env, env_text, 0o600)
     config = yaml.safe_load(config_path.read_text())
+    config.setdefault("general_settings", {})["use_x_forwarded_for"] = False
     settings = config.setdefault("litellm_settings", {})
     callbacks = [c for c in settings.get("callbacks", []) if c not in {"langfuse", "langfuse_otel", "observability_callback.observability"}]
     settings["callbacks"] = callbacks + ["observability_callback.observability"]
     put(config_path, yaml.safe_dump(config, sort_keys=False, allow_unicode=True), 0o600)
+    # This reused host gateway deliberately has no LiteLLM database. LiteLLM's
+    # DEV loader can otherwise re-read the shared .env after `unset` and try
+    # migrating Langfuse's container-only DATABASE_URL on every restart.
+    gateway_runner = runtime / "litellm/run-local.sh"
+    put(gateway_runner, '#!/usr/bin/env bash\nset -euo pipefail\ncd "' + str(runtime) + '"\n'
+        'set -a\nsource ./.env\nset +a\n'
+        'unset DATABASE_URL DIRECT_URL DATABASE_URL_READ_REPLICA\n'
+        'export LITELLM_MODE=PRODUCTION PYTHON_DOTENV_DISABLED=1\n'
+        'exec "' + str(venv_python.parent / "litellm") + '" --config ./litellm/config.local.yaml --host 0.0.0.0 --port 4000\n', 0o700)
     rules.mkdir(parents=True, exist_ok=True)
     for filename in ["recording-rules.yml"]:
         put(rules / ("llm-" + filename), (SOURCE / "prometheus" / filename).read_text())
@@ -156,7 +181,7 @@ def main():
     # process must reload its callback; preserve all inference server state.
     run(["systemctl", "--user", "restart", "litellm-gateway.service"])
     healthy = False
-    for attempt in range(40):
+    for attempt in range(180):
         try:
             with urllib.request.urlopen("http://127.0.0.1:4000/health/liveliness", timeout=1) as response:
                 healthy = response.status == 200

@@ -73,12 +73,34 @@ def panel(title, expressions, unit="short", description="", kind="timeseries", w
                {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
                 "orientation": "auto", "textMode": "value_and_name", "colorMode": "value",
                 "graphMode": "area", "justifyMode": "auto"})
+    if kind == "table":
+        options = {"showHeader": True, "cellHeight": "sm", "sortBy": [{"displayName": "总 Token", "desc": True}]}
     description = panel_description(title, unit, description, expressions)
     panels.append({"id": len(panels) + 1, "title": title, "description": description, "type": kind,
                    "gridPos": {"x": x, "y": y, "w": width, "h": height}, "datasource": DS,
                    "fieldConfig": {"defaults": default, "overrides": []}, "options": options,
                    "targets": [{"refId": chr(65 + i), "expr": expr, "legendFormat": legends[i] if legends else legend(expr),
-                                "instant": kind == "stat", "range": kind != "stat", "datasource": DS} for i, expr in enumerate(expressions)]})
+                                "instant": kind in {"stat", "table"}, "range": kind not in {"stat", "table"},
+                                **({"format": "table"} if kind == "table" else {}),
+                                "datasource": DS} for i, expr in enumerate(expressions)]})
+    if kind == "table":
+        panels[-1]["transformations"] = [
+            {"id": "joinByField", "options": {"byField": "source_ip", "mode": "outerTabular"}},
+            {"id": "organize", "options": {
+                "excludeByName": {"Time": True, **{f"Time {i}": True for i in range(1, len(expressions) + 1)}},
+                "renameByName": {"source_ip": "来源 IP", **{f"Value #{chr(65 + i)}": label for i, label in enumerate(legends)}},
+            }},
+        ]
+        # Fit all accounting columns at half-dashboard width, including the
+        # IP and request count; Grafana's default column widths hide totals.
+        panels[-1]["fieldConfig"]["defaults"].update(unit="locale", decimals=2 if "所选时段" in title else 0,
+            custom={"align": "auto", "minWidth": 70, "cellOptions": {"type": "auto"}})
+        panels[-1]["fieldConfig"]["overrides"] = [
+            {"matcher": {"id": "byName", "options": name}, "properties": [
+                {"id": "custom.width", "value": width},
+                *([{"id": "unit", "value": "string"}] if name == "来源 IP" else [])]}
+            for name, width in [("来源 IP", 125), ("输入 Token", 94), ("输出 Token", 94), ("总 Token", 94), ("请求数", 78)]
+        ]
 
 
 def band(items, width=8, height=7, kind="timeseries"):
@@ -174,6 +196,41 @@ band([
     ("vLLM / SGLang KV Cache 占用", f"llm:engine_kv_usage_ratio{M}", "percentunit", "本机仅部署 Strata 时该面板无样本；Strata 上下文占用在单独面板。"),
 ])
 
+row("07 · 来源 IP 与 Token 用量")
+S = '{model=~"$gateway_model",source_ip=~"$source_ip"}'
+def source_tokens(kind):
+    return 'llm_gateway_source_tokens_total' + S[:-1] + ',token_type=~"' + kind + '"}'
+
+for title, interval, x in [("来源 IP Token 用量 · 所选时段", True, 0), ("来源 IP Token 累计 · 启用以来", False, 12)]:
+    def usage_sum(expression):
+        value = f"increase({expression}[$__range])" if interval else expression
+        return f"sum by (source_ip) ({value})"
+    panel(title, [usage_sum(source_tokens("input")), usage_sum(source_tokens("output")),
+                  usage_sum(source_tokens("input|output")), usage_sum("llm_gateway_source_requests_total" + S)],
+          kind="table", width=12, x=x, height=9, legends=["输入 Token", "输出 Token", "总 Token", "请求数"])
+y += 9
+band([
+    ("来源 IP 输入 / 输出 Token 速率", [f"sum by (source_ip) ({rate(source_tokens(kind))})" for kind in ("input", "output")], "suffix:tok/s"),
+    ("来源 IP 缓存 / 推理 Token 速率", [f"sum by (source_ip) ({rate(source_tokens(kind))})" for kind in ("input_cached", "output_reasoning")], "suffix:tok/s"),
+    ("来源 IP usage 缺失请求", f"sum by (source_ip) (increase(llm_gateway_source_usage_missing_total{S}[$__range]))", "short"),
+])
+for item in panels:
+    if item["title"] in {"来源 IP 输入 / 输出 Token 速率", "来源 IP 缓存 / 推理 Token 速率", "来源 IP usage 缺失请求"}:
+        for target in item["targets"]:
+            expression = target["expr"]
+            kind = "缓存" if 'input_cached"' in expression else "推理" if 'output_reasoning"' in expression else "输入" if 'input"' in expression else "输出"
+            target["legendFormat"] = "{{source_ip}}" if "usage_missing" in expression else "{{source_ip}} · " + kind
+band([
+    ("来源统计持久化状态", "llm_gateway_source_usage_persistent", "short", "1=使用持久化 SQLite；0=内存模式，重启丢失累计值。"),
+    ("来源统计开始时间", "1000 * llm_gateway_source_tracking_started_timestamp_seconds", "dateTimeAsIso", "累计表以该时间为起点，时间筛选只作用于区间表及速率。"),
+    ("来源统计写入失败", "increase(llm_gateway_source_usage_errors_total[$__range])", "short", "非零时来源统计可能不完整，应检查网关日志。"),
+], height=5, kind="stat")
+for item in panels:
+    if item["title"] in {"来源统计持久化状态", "来源统计开始时间", "来源统计写入失败"}:
+        item["options"]["textMode"] = "value"
+
+metric_count = sum(item["type"] != "row" for item in panels)
+
 
 def variable(name, label, query):
     return {"name": name, "label": label, "type": "query", "datasource": DS, "definition": query,
@@ -182,14 +239,15 @@ def variable(name, label, query):
 
 
 dashboard = {"id": None, "uid": "litellm-gpu-overview", "title": "LLM 推理观测 · Strata / LiteLLM / GPU",
-             "description": "全部 51 个指标面板均标注计算公式、单位、统计窗口和实际 PromQL；点击面板信息图标，或顶部公式文档入口查看。",
+             "description": f"全部 {metric_count} 个指标面板均标注计算公式、单位、统计窗口和实际 PromQL；第 07 区按来源 IP 统计 Token；点击面板信息图标查看。",
              "tags": ["LLM", "Strata", "LiteLLM", "GPU", "Langfuse"], "timezone": "browser", "schemaVersion": 39,
-             "version": 3, "editable": True, "graphTooltip": 1, "refresh": "10s", "time": {"from": "now-1h", "to": "now"},
-             "annotations": {"list": []}, "links": [{"type": "link", "title": "计算公式与指标口径（51 面板）",
+             "version": 4, "editable": True, "graphTooltip": 1, "refresh": "10s", "time": {"from": "now-1h", "to": "now"},
+             "annotations": {"list": []}, "links": [{"type": "link", "title": f"计算公式与指标口径（{metric_count} 面板）",
                  "url": REFERENCE_URL, "targetBlank": True, "icon": "doc", "includeVars": False, "keepTime": False}], "panels": panels,
              "templating": {"list": [{"name": "DS_PROMETHEUS", "label": "数据源", "type": "datasource", "query": "prometheus",
                                       "current": {}, "options": [], "refresh": 1},
                                      variable("gateway_model", "网关模型", "label_values(litellm_proxy_total_requests_metric_total, requested_model)"),
+                                     variable("source_ip", "来源 IP", 'label_values(llm_gateway_source_requests_total, source_ip)'),
                                      variable("engine_model", "引擎模型", "label_values(llm:engine_requests_running, model)"),
                                      variable("deployment", "部署", "label_values(llm:gpu_utilization_percent, deployment)"),
                                      variable("gpu", "GPU", 'label_values(llm:gpu_utilization_percent{deployment=~"$deployment"}, gpu)')]}}
