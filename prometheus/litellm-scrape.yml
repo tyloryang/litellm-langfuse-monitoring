@@ -1,11 +1,34 @@
-# Append under existing scrape_configs; do not overwrite existing jobs.
-# LiteLLM metrics authentication differs by version: configure bearer_token_file
-# only when the /metrics endpoint requires it. Keep token outside Git.
+# Append jobs under existing prometheus.yml scrape_configs (not a standalone prometheus.yml)
+# /metrics on LiteLLM may require a Bearer token. Mount a token file on VM-02.
 - job_name: litellm
   scrape_interval: 15s
   metrics_path: /metrics
-  # bearer_token_file: /etc/prometheus/secrets/litellm-metrics-token
+  authorization:
+    type: Bearer
+    credentials_file: /etc/prometheus/secrets/litellm_metrics_token
   static_configs:
     - targets: ["192.168.10.10:9401"]
-      labels:
-        service: litellm
+      labels: {service: litellm, environment: production}
+- job_name: vllm
+  scrape_interval: 15s
+  metrics_path: /metrics
+  static_configs:
+    - targets: ["10.0.0.11:8000"]
+      labels: {engine: vllm, deployment: gpu-vm-01}
+- job_name: sglang
+  scrape_interval: 15s
+  metrics_path: /metrics
+  static_configs:
+    - targets: ["10.0.0.12:30000"]
+      labels: {engine: sglang, deployment: gpu-vm-02}
+- job_name: gpu-dcgm
+  scrape_interval: 15s
+  metrics_path: /metrics
+  static_configs:
+    - targets: ["10.0.0.11:9400"]
+      labels: {deployment: gpu-vm-01}
+    - targets: ["10.0.0.12:9400"]
+      labels: {deployment: gpu-vm-02}
+    - targets: ["10.0.0.13:9400"]
+      labels: {deployment: gpu-vm-03}
+# Strata's /metrics is not assumed to exist. Add only after verifying an exporter.
