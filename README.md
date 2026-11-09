@@ -30,6 +30,24 @@ Windows + Ubuntu 24.04 WSL 的运行配置、Grafana 看板和 Langfuse 工具�
 
 TPOT 使用成功流式请求的 `(最后输出时间 - 首次输出时间) / (completion_tokens - 1)`。SSE 帧数不等于 Token 数；缺少 usage、仅一帧或失败时会排除。Strata 的引擎 ITL 是按 Token 间隔数加权的均值估计，Strata 上下文占用也不能当作物理 KV 显存利用率。
 
+## Grafana 计算公式（重点）
+
+**全部 51 个指标面板都标注了计算公式、统计口径、单位和实际 PromQL。** 在看板点击面板标题旁的信息图标，或打开顶部“计算公式与指标口径（51 面板）”链接。完整说明见 [Grafana 看板计算公式与统计口径](docs/grafana-formulas.md)。
+
+| 重点指标 | 计算公式 | 口径限制 |
+| --- | --- | --- |
+| 网关 TTFT | `首个有效增量时刻 − pre-call hook 起始时刻` | 有效增量包括正文、推理或工具参数；不代表客户端实际收包 |
+| 网关 TPOT | `(末有效输出时刻 − 首有效输出时刻) / (completion_tokens − 1)` | 仅成功且有效的流式；分母包含推理 Token，不能用帧数 |
+| 最近引擎 TPOT / 解码速度 | `decode_seconds / (output_tokens − 1)`；`engine_generated / decode_seconds` | N−1 与 N 不同，Token 来源也可能不同，不能直接取倒数 |
+| P50 / P95 / P99 | `histogram_quantile(q, sum by (le) (rate(bucket[W])))` | 合并所选样本的 bucket 后估算，不平均各实例 P95，不把两个 P95 相减 |
+| 网关 Token/s、QPS | `sum by (requested_model) (rate(counter[5m]))` | recording rule 固定 5 分钟窗口，非瞬时速率 |
+| 显存占用率 | `100 × used_bytes / total_bytes` | 每 GPU 计算；包含驻留模型，区别于 KV 占用 |
+| 前缀命中率 / MTP 接受率 | `sum(rate(命中或接受 Token[W])) / max(sum(rate(查询或草稿 Token[W])), 10⁻⁶)` | Token 加权，非请求加权；W 为 Grafana 的动态速率窗口 |
+| 最近 Prefill 吞吐 | `max(0, prompt_tokens − reused) / (prompt_ms / 1000)` | 排除缓存复用 Token，缺少处理时间时无有效值 |
+| PCIe / 磁盘吞吐 | `原始 MiB/s × 1048576 → B/s` | 原始字段已经是速率，不再次调用 rate |
+
+公式说明和看板由 `python ops/build_dashboard.py` 同时生成，保证文档中的 PromQL 与面板一致。
+
 ## Langfuse 改进
 
 旧环境的 OTEL V2 默认不采集消息内容；客户端工具执行也没有埋点及父 Span 传播。本项目回调现在显式上报完整 generation 数据，并保留 `traceparent`、Session、用户、推理与缓存用量。客户端通过 SDK 创建真实 AGENT / TOOL 节点，网关生成记录自动关联到同一条链路。

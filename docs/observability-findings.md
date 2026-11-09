@@ -18,6 +18,8 @@ JSON 导出器每 3 秒轮询，Prometheus 每 5 秒抓取 Strata。轮询失败
 
 ## 指标参考与口径
 
+**各面板计算公式见 [Grafana 看板计算公式与统计口径](grafana-formulas.md)**：包含全部 51 面板的原始计算、78 条实际 PromQL、固定 / 动态窗口、聚合权重及单位换算，同步显示在 Grafana 面板说明中。
+
 GitHub star 是 2026-11-09 API 快照，用于选择生态参考：
 
 | 项目 | 当日 star | 参考指标 |
