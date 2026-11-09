@@ -111,7 +111,7 @@ services:
       <<: *langfuse_env
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_MEDIA_PUBLIC_ENDPOINT}
-    ports: ["${HOST_IP}:3000:3000"]
+    expose: ["3000"]
     networks: [backend]
   litellm:
     image: ${LITELLM_IMAGE}
@@ -120,7 +120,24 @@ services:
     env_file: [.env]
     volumes: ["./litellm/config.yaml:/app/config.yaml:ro"]
     command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
-    ports: ["${HOST_IP}:4000:4000"]
+    expose: ["4000"]
+    networks: [backend]
+  nginx:
+    image: ${NGINX_IMAGE}
+    restart: unless-stopped
+    depends_on: [litellm, langfuse-web]
+    ports:
+      - "${HOST_IP}:8080:8080"
+      - "${HOST_IP}:8443:8443"
+      - "${HOST_IP}:8444:8444"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./data/nginx-logs:/var/log/nginx
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      retries: 3
     networks: [backend]
 networks:
   backend:
