@@ -2,7 +2,7 @@
 
 这个仓库补齐了大模型网关的观测链路。业务请求从 Nginx 进入 LiteLLM，再转发到推理引擎。Langfuse 保存请求内容、Token、时延、来源 IP 和工具调用，Prometheus 采集网关与推理引擎指标，Grafana 负责查询和展示。
 
-项目面向内网和离线环境。Windows 11 + Ubuntu 24.04 WSL 的既有环境已经完成真实推理、Trace、工具调用和看板验证。麒麟 V10 的完整离线包、断网冷安装和实机验收仍待完成，因此仓库中的镜像版本和物料清单只能作为准备基线。
+项目面向内网和离线环境。Windows 11 + Ubuntu 24.04 WSL 的既有环境已经完成真实推理、Trace、工具调用和看板验证。[linux/amd64 配置与镜像包](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-amd64-20261109)已经发布，包含 11 个渡渡鸟镜像、Compose 和监控配置。麒麟 V10 的系统 RPM、Python wheel、模型权重和断网冷安装仍未验收，不能把这个 Release 当作完整离线环境。
 
 ## 1. 项目背景
 
@@ -158,7 +158,7 @@ Nginx 访问日志当前写入本地文件，仓库没有配置日志采集后�
 6. 新建 Prometheus 和 Grafana，合并抓取配置、规则和告警，导入看板。需要 Strata 补充指标时，再部署 `exporters/strata_extra.py`。
 7. 全程使用本地镜像启动，Compose 命令带 `--pull never --no-build`。完成真实非流式 / 流式请求、工具链、来源 IP、PromQL、冷启动、持久化和恢复验收。
 
-具体命令、离线包目录结构、SELinux / firewalld 配置和失败处理见[麒麟 V10 完全离线部署手册](docs/offline-deployment-baseline.md)。当前仓库尚未交付完整离线物料，也没有完成麒麟实机断网冷装，因此不能把上述流程写成“已验证成功”。
+具体命令、离线包目录结构、SELinux / firewalld 配置和失败处理见[麒麟 V10 完全离线部署手册](docs/offline-deployment-baseline.md)。已发布的配置与镜像包包含上述 9 个核心镜像，以及 Prometheus 和 Grafana；它不包含麒麟 RPM、wheelhouse 和模型权重，也没有完成麒麟实机断网冷装，因此不能把上述流程写成“已验证成功”。
 
 ### 4.2 复用已有 Grafana 和 Prometheus
 
