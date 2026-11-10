@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 历史 WSL 复用部署 | LiteLLM 1.106.6、Langfuse 4.73.0、真实 Strata 推理与工具链已验证 | 在目标麒麟 SP / 架构上重新验证并记录证据 |
 | 麒麟系统 | 已明确 RPM / YUM 交付路线 | 记录实际 SP / Build、内核 / glibc / 架构，锁定匹配的系统与 Docker 发行包 |
-| 看板 | 59 指标面板、94 查询、16 recording rule、9 告警；含来源 IP 用量 | 目标 Prometheus / Grafana 配置与在线数据复核 |
+| 看板 | 68 指标面板、105 查询、16 recording rule、9 告警；含来源 IP 用量和自动路由 | 目标 Prometheus / Grafana 配置与在线数据复核 |
 | Python | 直接依赖版本已列明 | 生成该目标平台的完整传递依赖锁与 wheelhouse，在空 venv 无网安装成功 |
 | 镜像 | 9 个 DDN 来源、manifest digest 与 amd64 配置元数据已核查 | 验证整套候选版本、回调依赖与 MinIO shell 后锁 image ID 并导出 |
 | 全新离线部署 | **待验收** | 断网冷安装、冷启动、重启与持久化、回滚均通过 |
@@ -29,7 +29,7 @@ VM-01 可按 16 vCPU、48–64 GiB RAM、300 GiB SSD 起步规划，再根据保
                                       │ Worker / PostgreSQL / ClickHouse / Redis / MinIO
 VM-02 Prometheus ── HTTP :9401 /metrics ── Nginx ── LiteLLM
                  └─ GPU VM 原生指标 / Strata JSON exporter :9402
-VM-03 Grafana ── 已有 Prometheus 数据源 ── 59 面板
+VM-03 Grafana ── 已有 Prometheus 数据源 ── 68 面板
 ```
 
 | 访问方向 | 目标 | 配置位置 / 要求 |
@@ -143,7 +143,7 @@ fi
 | TLS 与信任 | server.crt、server.key、完整 CA 链 / 内部根证书，SAN 包含实际 DNS / IP；系统和浏览器信任已导入；单独交付私钥 |
 | 模型配置 | `model_name` 是网关别名，`openai/` 后为真实上游 ID；api_base 含 `/v1`，未部署的路由删除；请求列表与验收矩阵一致 |
 | Prometheus | 完整主配置的合并方案、scrape 片段、16 recording rule、9 alert、Token 文件及其容器挂载 / UID；不覆盖既有主配置 |
-| Grafana | 59 面板 JSON、数据源 UID / 变量、provisioning 或导入步骤、已有 Alertmanager 通知路由 |
+| Grafana | 68 面板 JSON、数据源 UID / 变量、provisioning 或导入步骤、已有 Alertmanager 通知路由 |
 | Strata 补充导出器 | Python wheel、`strata_extra.py`、服务单元、STRATA_API_KEY、JSON 地址、监听地址 / 防火墙；默认 9402 |
 | GPU 推理运行时 | 复用服务则记录版本 / 模型 ID / 内网地址；新装则带全部模型权重分片、tokenizer、配置、引擎二进制 / 镜像、依赖库和 GPU 驱动 / CUDA / CANN 等对应物料 |
 | 模型校验 | 权重和 tokenizer 全部文件的大小 / SHA-256；本地路径、许可文件、上下文 / 量化 / 参数配置；不允许启动时自动下载缺失分片 |
@@ -545,7 +545,7 @@ export GATEWAY_MODEL=qwen-strata
 
 ### 6.3 Grafana 指标与公式
 
-- 59 面板已导入、数据源有效；94 条 PromQL 查询全部执行成功，实际部署指标的关键序列为有限数值。未部署的可选引擎可无数据，但必需 job 不得缺失。
+- 68 面板已导入、数据源有效；105 条 PromQL 查询全部执行成功，实际部署指标的关键序列为有限数值。未部署的可选引擎可无数据，但必需 job 不得缺失。
 - 网关有请求与输入 / 输出 Token 增量，真实流式有 TTFT / TPOT；Langfuse TTFT 与回调 metadata 一致，usage 互斥细分相加等于 raw total。
 - 公式已核查：`TPOT=(last-first)/(N−1)`；P95 来自合并 bucket；网关 Token/s 和 QPS 是固定 `[5m]`；VRAM 为 `100×used/total`；前缀 / MTP 用 Token 加权；MiB/s 乘 1048576；SSE 帧不当作 Token。
 - Strata context occupancy 与物理 KV 分开；Strata ITL 是按间隔数加权的平均值估计。空闲 / 冷启没有分位样本时保持无值，不强制补 0 秒。

@@ -213,3 +213,79 @@ class SourceAccounting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AutoRouteMetrics(unittest.TestCase):
+    def test_route_labels_exclude_prompt_text_and_keep_negative_contribution(self):
+        decision = {"router_model_name": "qwen-auto", "routed_model": "qwen-32k", "tier": "CONTEXT_32K",
+                    "cause": "classifier_plugin", "signals": ["classifier-plugin:CONTEXT_32K"]}
+        heuristic = {"tier": "COMPLEX", "score": 0.475, "dimensions": [
+            {"name": "codePresence", "weight": 0.30, "score": 1.0, "contribution": 0.30, "signal": "code (SECRET-PROMPT-TEXT)"},
+            {"name": "tokenCount", "weight": 0.10, "score": 0, "contribution": 0, "signal": None},
+            {"name": "simpleIndicators", "weight": 0.05, "score": -1.0, "contribution": -0.05, "signal": "simple"},
+            {"name": "notASignal", "weight": 1, "score": 1, "contribution": 1, "signal": "SECRET-PROMPT-TEXT"},
+        ]}
+        labels = {"requested_model": "qwen-auto", "routed_model": "qwen-32k", "context_tier": "CONTEXT_32K",
+                  "heuristic_tier": "COMPLEX", "route_cause": "classifier_plugin"}
+        before = gateway.REGISTRY.get_sample_value("llm_gateway_auto_routes_total", labels) or 0
+        gateway.record_auto_route(decision, heuristic)
+        gateway.record_auto_route({}, {})
+        gateway.record_auto_route({"cause": "classifier_plugin"}, {})
+        gateway.record_auto_route({"router_model_name": "custom-router", "routed_model": "secret-model-name",
+                                   "tier": "NOPE", "cause": "free text cause"},
+                                  {"tier": "HUGE", "score": -0.05, "dimensions": heuristic["dimensions"]})
+        self.assertEqual(gateway.REGISTRY.get_sample_value("llm_gateway_auto_routes_total", labels), before + 1)
+        collapsed = {"requested_model": "other", "routed_model": "other", "context_tier": "other",
+                     "heuristic_tier": "other", "route_cause": "other"}
+        self.assertEqual(gateway.REGISTRY.get_sample_value("llm_gateway_auto_routes_total", collapsed), 1)
+        self.assertEqual(gateway.REGISTRY.get_sample_value("llm_gateway_heuristic_score_count",
+            {"requested_model": "qwen-auto", "routed_model": "qwen-32k", "context_tier": "CONTEXT_32K", "heuristic_tier": "COMPLEX"}), 1)
+        self.assertIsNone(gateway.REGISTRY.get_sample_value("llm_gateway_heuristic_score_count",
+            {"requested_model": "other", "routed_model": "other", "context_tier": "other", "heuristic_tier": "other"}))
+        fired = {"requested_model": "qwen-auto", "routed_model": "qwen-32k", "context_tier": "CONTEXT_32K", "signal": "codePresence"}
+        self.assertEqual(gateway.REGISTRY.get_sample_value("llm_gateway_route_signal_firings_total", fired), 1)
+        self.assertIsNone(gateway.REGISTRY.get_sample_value("llm_gateway_route_signal_firings_total", {**fired, "signal": "tokenCount"}))
+        self.assertEqual(gateway.REGISTRY.get_sample_value("llm_gateway_route_signal_weight", {"signal": "tokenCount"}), 0.10)
+        self.assertAlmostEqual(gateway.REGISTRY.get_sample_value("llm_gateway_route_signal_contribution",
+            {"requested_model": "qwen-auto", "routed_model": "qwen-32k", "context_tier": "CONTEXT_32K", "signal": "simpleIndicators"}), -0.05)
+        rendered = json.dumps([{"name": sample.name, "labels": sample.labels} for metric in gateway.REGISTRY.collect() for sample in metric.samples])
+        for forbidden in ("SECRET-PROMPT-TEXT", "secret-model-name", "free text cause", "notASignal"):
+            self.assertNotIn(forbidden, rendered)
+
+
+class AutoRouteTrace(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.logger = gateway.GatewayObservability(source_usage=gateway.SourceUsageCollector(":memory:"))
+        self.exporter = InMemorySpanExporter()
+        self.provider = TracerProvider()
+        self.provider.add_span_processor(SimpleSpanProcessor(self.exporter))
+        self.logger.provider = self.provider
+        self.logger.tracer = self.provider.get_tracer("test")
+
+    def tearDown(self):
+        self.provider.shutdown()
+
+    async def test_one_completion_exports_route_metrics_once(self):
+        import routing_decision_log
+        labels = {"requested_model": "qwen-auto", "routed_model": "qwen-64k", "context_tier": "CONTEXT_64K",
+                  "heuristic_tier": "SIMPLE", "route_cause": "classifier_plugin"}
+        before = gateway.REGISTRY.get_sample_value("llm_gateway_auto_routes_total", labels) or 0
+        data = {"model": "qwen-64k", "litellm_call_id": "route-metric",
+                "messages": [{"role": "user", "content": "SECRET-PROMPT-TEXT"}],
+                "metadata": {"requested_model": "qwen-auto"}}
+        await self.logger.async_pre_call_hook(None, None, data, "completion")
+        heuristic = {"tier": "SIMPLE", "score": 0.02, "dimensions": [
+            {"name": "questionComplexity", "weight": 0.02, "score": 1, "contribution": 0.02, "signal": "question"}]}
+        decision = {"router_model_name": "qwen-auto", "routed_model": "qwen-64k", "tier": "CONTEXT_64K", "cause": "classifier_plugin"}
+        kwargs = {"model": "qwen-64k", "litellm_call_id": "route-metric", "litellm_params": {"metadata": data["metadata"]},
+                  "standard_logging_object": {"metadata": {"routing_decision": decision}, "messages": data["messages"]}}
+        with patch.object(routing_decision_log, "_heuristic", return_value=heuristic):
+            await self.logger.async_log_success_event(kwargs, {"choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 1}}, None, None)
+            await self.logger.async_log_success_event(kwargs, {"choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 1}}, None, None)
+        self.assertEqual(gateway.REGISTRY.get_sample_value("llm_gateway_auto_routes_total", labels), before + 1)
+        metadata = json.loads(self.exporter.get_finished_spans()[0].attributes["langfuse.observation.metadata"])
+        self.assertEqual(metadata["context_tier"], "CONTEXT_64K")
+        self.assertEqual(metadata["heuristic_score"], "0.020")
+        self.assertEqual(metadata["heuristic_tier"], "SIMPLE")

@@ -241,6 +241,43 @@ FORMULAS = {
         "直接读取 `vllm:kv_cache_usage_perc{job=\"vllm\"}` 或 `sglang:token_usage{job=\"sglang\"}`，比值 0–1 在 Grafana 显示为 0–100%。",
         "沿用各引擎自己的 KV / Token 池 gauge，跨引擎内部语义可能不同。明确排除 Strata 的同名兼容指标，Strata 单引擎环境无该样本是预期行为。",
     ),
+
+    "自动路由请求速率 · 上下文档位": (
+        "`rate_tier = Σ rate(llm_gateway_auto_routes_total[W])`，按 `context_tier` 分组。",
+        "只统计 LiteLLM 写出 routing_decision 的已完成请求。context_tier 由自定义 classifier 按输入和预留输出 Token 选为 CONTEXT_32K / 64K / 128K / 256K，并决定 routed_model。启发式档位不参与选模。W = $__rate_interval。模型名、档位和原因只保留有限枚举，提示词原文不会成为标签；枚举外的值合并为 other。",
+    ),
+    "自动路由请求速率 · 路由模型": (
+        "`rate_model = Σ rate(llm_gateway_auto_routes_total[W])`，按 `routed_model` 分组。",
+        "routed_model 是实际转发的模型，当前为 qwen-32k / qwen-64k / qwen-128k / qwen-256k。请求能放进哪个窗口，就进哪个模型；放不下时由 LiteLLM 的 context-window escalation 升档。不要用启发式 COMPLEX 解释为已经改派到更大的模型。",
+    ),
+    "启发式档位速率": (
+        "`rate_heuristic = Σ rate(llm_gateway_auto_routes_total[W])`，按 `heuristic_tier` 分组。",
+        "heuristic_tier 是官方 ComplexityRouter 的 SIMPLE / MEDIUM / COMPLEX / REASONING，只描述内容特征。它和上下文档位是两套结果：短请求可以同时是 CONTEXT_32K 和 COMPLEX。没有启发式结果时记为 unknown，不补成 SIMPLE。",
+    ),
+    "启发式分数 P50 / P95 / P99": (
+        "`score = Σ(dimension_score × dimension_weight)`。默认权重为 tokenCount 0.10、codePresence 0.30、reasoningMarkers 0.25、technicalTerms 0.25、simpleIndicators 0.05、multiStepPatterns 0.03、questionComplexity 0.02。分界为 simple/medium 0.15、medium/complex 0.35、complex/reasoning 0.60。面板对该 histogram 计算 `Q(0.50)`、`Q(0.95)`、`Q(0.99)`。",
+        "只把 score ≥ 0 的自动路由请求观察进 histogram。simpleIndicators 的维度分可以为 −1，总分小于 0 时不进入本图，但仍计入路由次数和信号贡献。分数解释内容，不选择模型。桶内分位是估计值，样本少时不稳定。",
+    ),
+    "已触发信号次数": (
+        "`firings_signal = Σ increase(llm_gateway_route_signal_firings_total[R])`，按官方维度名分组。",
+        "只有 signal 非空的维度加 1。未触发的维度保留在权重表中，但不会出现在本图。允许的维度名只有 tokenCount、codePresence、reasoningMarkers、technicalTerms、simpleIndicators、multiStepPatterns、questionComplexity。R = $__range，曲线最右端就是所选时段，不要再把整条曲线求和。",
+    ),
+    "已触发信号平均贡献": (
+        "`avg_contribution_signal = Δ(llm_gateway_route_signal_contribution[R]) / max(Σ increase(firings_signal[R]), 10⁻⁶)`，其中单次 `contribution = dimension_score × weight`。",
+        "分子是带符号 gauge 的窗口增量，simpleIndicators 可以是负数，所以不能使用 Prometheus counter。分母只包含已触发次数。结果是该窗口内已触发信号的平均贡献，不是配置权重；权重见旁边的维度权重面板。进程重启后累计值从 0 重新开始。",
+    ),
+    "路由原因分布": (
+        "`routes_cause = Σ increase(llm_gateway_auto_routes_total[R])`，按 `route_cause` 分组。",
+        "route_cause 取 LiteLLM routing_decision.cause 的有限枚举。classifier_plugin 表示自定义 token classifier 选出了档位；不在 LiteLLM 1.106.6 枚举中的原因合并为 other。曲线最右端是所选时段的次数，increase 可能因采样边界而不是整数。",
+    ),
+    "自动路由结果": (
+        "每个 `(context_tier, routed_model, heuristic_tier, route_cause)` 组合计算 `requests = Σ increase(llm_gateway_auto_routes_total[R])`。",
+        "当前时点的 instant 表，按请求数降序。四个标签一起标识一组路由结果，用来对照“内容落在哪个窗口”和“启发式认为内容有多复杂”。启发式档位不是选模依据。increase 是采样估算，窗口边界和首次抓取会使结果出现小数。",
+    ),
+    "启发式维度权重": (
+        "官方默认 `weight(tokenCount)=0.10`、`weight(codePresence)=0.30`、`weight(reasoningMarkers)=0.25`、`weight(technicalTerms)=0.25`、`weight(simpleIndicators)=0.05`、`weight(multiStepPatterns)=0.03`、`weight(questionComplexity)=0.02`。`score = Σ(dimension_score × weight)`。",
+        "面板读取进程内官方 scorer 的当前配置，不是从历史流量反推。首次完成自动路由时写入全部维度，包括尚未触发的维度。LiteLLM 升级或权重配置变化后，以新进程实际值为准；默认值只是 1.106.6 的对照，不在查询里写死。",
+    ),
 }
 
 UNITS = {
@@ -286,6 +323,9 @@ INTRODUCTION = """# Grafana 看板计算公式与统计口径
 | 显存占用率 | `100 × used_bytes / total_bytes` | 每 GPU 计算；驻留模型包含在内，不能当作 KV 使用率 |
 | 前缀命中率 / MTP 接受率 | `Σ rate(命中或接受 Token[W]) / max(Σ rate(查询或草稿 Token[W]), 10⁻⁶)` | Token 加权，非请求加权；无流量时的零没有质量判定意义 |
 | PCIe / 磁盘 | `MiB/s × 1048576 → B/s` | 原始值已经是速率，不能再次求 rate |
+| 自动路由模型 | 自定义 classifier 按 Token 选择 `CONTEXT_*`，再映射到 `qwen-*` | 启发式分数只解释内容，不改变选中的模型 |
+| 启发式分数 | `Σ(dimension_score × weight)`，分界 0.15 / 0.35 / 0.60 | 只把已触发信号计入贡献；simpleIndicators 可以是负贡献 |
+| 信号平均贡献 | `Δ(signed contribution[R]) / increase(firings[R])` | 未触发的维度不进入平均；配置权重单独看维度权重面板 |
 
 ## 符号、窗口和聚合
 
@@ -295,7 +335,7 @@ INTRODUCTION = """# Grafana 看板计算公式与统计口径
 - `rate` / `increase` 会处理累计值下降的重置并对窗口边界外推，所以请求数 / Token 增量可能不是整数。`rate` 至少需要两个样本；没有请求或样本不足时可以无值 / NaN，不能填成 0 秒延迟。
 - `Q(q)` 在本页统一表示 `histogram_quantile(q, sum by (le) (rate(<metric>_bucket[W])))`。本看板的延迟分位按所选模型及其全部实例合并 bucket；不保留逐模型 / 实例曲线。桶内使用分布估计，精度受 bucket 和样本数限制。
 - **网关输入 / 输出 Token/s、QPS 和引擎 Token/s 的 recording rule 使用固定 `[5m]`，每 15 秒求值。** 它们不会因为 Grafana 切换时间范围而变成 1m 或瞬时速率。
-- 网关筛选使用 `requested_model`（自定义时延与来源计量使用 `model`）；原生引擎使用 `model_name`，归一化后为 `model`；GPU 按 `deployment, gpu` 筛选。来源 IP 筛选只作用于第 07 区的来源用量 / 速率面板，其他面板仍保留原聚合范围。
+- 网关筛选使用 `requested_model`（自定义时延与来源计量使用 `model`）；原生引擎使用 `model_name`，归一化后为 `model`；GPU 按 `deployment, gpu` 筛选。来源 IP 筛选只作用于第 07 区的来源用量 / 速率面板，其他面板仍保留原聚合范围。第 08 区使用网关模型、路由模型和上下文档位筛选；启发式档位、分数和信号权重不反向影响路由。
 - GPU recording rule 先按 `(deployment, gpu)` 取 max 去重，再以 PromQL `or` 优先选 Strata、缺失时选 DCGM；不是把两个采集源相加。引擎归一化只复制模型标签并选择对应引擎指标，不改变 histogram 的计数语义。
 - `percent` 接收 0–100，`percentunit` 接收 0–1 并显示为百分数；容量基础单位为字节，`Bps` 表示字节 / 秒。MiB/s 到 B/s 的换算固定乘 2²⁰，与 Grafana 自动选择的显示前缀分开理解；`W × s` 才是能量，功耗 W 不是电量 kWh。
 - “最近请求”是 gauge，空闲仍保留最后请求值；不是“此刻正在生成”的值。timeseries 图例 `Last` / `Max` 是曲线值的最近 / 最大值；P95 曲线的 Max 只是窗口 P95 的最大值，不是请求最大延迟。

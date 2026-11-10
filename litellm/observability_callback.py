@@ -7,6 +7,7 @@ replaces langfuse_otel; enabling both would export each generation twice.
 import json
 import ipaddress
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -46,6 +47,91 @@ OTLP_LAST_SUCCESS = Gauge("llm_gateway_otel_last_success_timestamp_seconds", "Mo
 SOURCE_USAGE_ERRORS = Counter("llm_gateway_source_usage_errors", "Source IP accounting write failures.")
 for export_status in ("success", "failure"):
     OTLP_RESULTS.labels(export_status).inc(0)
+
+CONTEXT_TIERS = {"CONTEXT_32K", "CONTEXT_64K", "CONTEXT_128K", "CONTEXT_256K"}
+HEURISTIC_TIERS = {"SIMPLE", "MEDIUM", "COMPLEX", "REASONING"}
+ROUTED_MODELS = {"qwen-32k", "qwen-64k", "qwen-128k", "qwen-256k"}
+REQUESTED_MODELS = {"qwen-auto"}
+SIGNAL_NAMES = {"tokenCount", "codePresence", "reasoningMarkers", "technicalTerms", "simpleIndicators", "multiStepPatterns", "questionComplexity"}
+ROUTE_CAUSES = {
+    "prompt_cache_cost", "heuristic_scorer", "heuristic_v2", "reasoning_override", "llm_classifier",
+    "capability_classifier", "jev_classifier", "llm_v2_classifier", "llm_v2_fallback",
+    "heuristic_first_short_circuit", "hybrid_short_circuit", "classifier_plugin", "classifier_fallback",
+    "capability_classifier_fallback", "default_model_fallback", "literal_keyword_match", "semantic_keyword_match",
+    "plan_mode", "housekeeping", "modality_escalation", "modality_pin_override", "health_failover",
+    "health_default_fallback", "session_affinity_pin", "session_affinity_escalation", "user_turn_continuation",
+    "default_fallback", "keyword", "quality_tier", "bandit", "semantic_match", "semantic_no_match", "semantic_error",
+}
+ROUTE_LABELS = ("requested_model", "routed_model", "context_tier", "heuristic_tier", "route_cause")
+SCORE_LABELS = ("requested_model", "routed_model", "context_tier", "heuristic_tier")
+SIGNAL_LABELS = ("requested_model", "routed_model", "context_tier", "signal")
+AUTO_ROUTES = Counter("llm_gateway_auto_routes", "Completed auto-routed requests. Context tier selects the model; heuristic tier is explanatory.", ROUTE_LABELS)
+HEURISTIC_SCORE = Histogram("llm_gateway_heuristic_score", "Official complexity score for auto-routed requests. It does not select the model.", SCORE_LABELS, buckets=(0.05, 0.15, 0.25, 0.35, 0.45, 0.60, 0.75, 0.90, 1.0))
+SIGNAL_FIRINGS = Counter("llm_gateway_route_signal_firings", "Fired heuristic dimensions. Dimensions without a signal are omitted.", SIGNAL_LABELS)
+SIGNAL_WEIGHT = Gauge("llm_gateway_route_signal_weight", "Configured heuristic dimension weight read from the official scorer.", ("signal",))
+_ROUTE_CONTRIBUTION = {}
+_ROUTE_CONTRIBUTION_LOCK = threading.Lock()
+
+
+def _bounded(value, allowed, fallback="other"):
+    text = str(value or "")
+    return text if text in allowed else fallback
+
+
+class RouteContributionCollector:
+    """Signed contribution cannot use a Prometheus counter; simpleIndicators may be negative."""
+
+    def describe(self):
+        return [GaugeMetricFamily("llm_gateway_route_signal_contribution", "Cumulative signed contribution of fired heuristic signals.", labels=list(SIGNAL_LABELS))]
+
+    def collect(self):
+        family = self.describe()[0]
+        with _ROUTE_CONTRIBUTION_LOCK:
+            items = list(_ROUTE_CONTRIBUTION.items())
+        for labels, value in items:
+            family.add_metric(list(labels), value)
+        yield family
+
+
+REGISTRY.register(RouteContributionCollector())
+
+
+def record_auto_route(decision, heuristic):
+    """Export bounded route labels only. Prompt text is never a label."""
+    if not isinstance(decision, dict) or not decision.get("routed_model") and not decision.get("tier"):
+        return
+    requested = _bounded(decision.get("router_model_name") or decision.get("requested_model"), REQUESTED_MODELS)
+    routed = _bounded(decision.get("routed_model"), ROUTED_MODELS)
+    context_tier = _bounded(decision.get("tier"), CONTEXT_TIERS)
+    cause = _bounded(decision.get("cause"), ROUTE_CAUSES)
+    heuristic = heuristic if isinstance(heuristic, dict) else {}
+    heuristic_tier = _bounded(heuristic.get("tier"), HEURISTIC_TIERS) if heuristic.get("tier") else "unknown"
+    AUTO_ROUTES.labels(requested, routed, context_tier, heuristic_tier, cause).inc()
+    try:
+        score = float(heuristic.get("score"))
+    except (TypeError, ValueError):
+        score = None
+    if score is not None and math.isfinite(score) and score >= 0:
+        HEURISTIC_SCORE.labels(requested, routed, context_tier, heuristic_tier).observe(score)
+    for item in heuristic.get("dimensions") or []:
+        if not isinstance(item, dict) or item.get("name") not in SIGNAL_NAMES:
+            continue
+        try:
+            SIGNAL_WEIGHT.labels(item["name"]).set(float(item.get("weight")))
+        except (TypeError, ValueError):
+            pass
+        if not item.get("signal"):
+            continue
+        SIGNAL_FIRINGS.labels(requested, routed, context_tier, item["name"]).inc()
+        try:
+            contribution = float(item.get("contribution"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(contribution):
+            continue
+        key = (requested, routed, context_tier, item["name"])
+        with _ROUTE_CONTRIBUTION_LOCK:
+            _ROUTE_CONTRIBUTION[key] = _ROUTE_CONTRIBUTION.get(key, 0.0) + contribution
 
 
 def canonical_ip(value):
@@ -418,7 +504,14 @@ class GatewayObservability(CustomLogger):
             state.finished = True
             if key:
                 self.finished[key] = time.perf_counter()
-        model = str(state.metadata.get("requested_model") or (kwargs.get("litellm_params") or {}).get("model_group") or kwargs.get("model") or "unknown")
+        requested = str(state.metadata.get("requested_model") or (kwargs.get("litellm_params") or {}).get("model_group") or kwargs.get("model") or "unknown")
+        standard = kwargs.get("standard_logging_object") or {}
+        decision = {}
+        if isinstance(standard, dict) and isinstance(standard.get("metadata"), dict):
+            candidate = standard["metadata"].get("routing_decision")
+            if isinstance(candidate, dict):
+                decision = candidate
+        model = str(decision.get("routed_model") or kwargs.get("model") or requested)
         elapsed = max(0, time.perf_counter() - state.started)
         E2E.labels(model, str(state.streaming).lower()).observe(elapsed)
         COMPLETIONS.labels(model, "error" if error else "success").inc()
@@ -449,6 +542,36 @@ class GatewayObservability(CustomLogger):
         # contain request headers, credentials or unserializable SDK objects).
         metadata = {k: state.metadata[k] for k in ("gateway_request_id", "trace_name", "session_id", "trace_user_id", "tags") if k in state.metadata}
         metadata.update(state.source)
+        metadata["requested_model"] = requested
+        if decision:
+            metadata["routed_model"] = decision.get("routed_model")
+            metadata["context_tier"] = decision.get("tier")
+            metadata["route_cause"] = decision.get("cause")
+            metadata["route_signals"] = ", ".join(str(item) for item in decision.get("signals") or [])
+        try:
+            from routing_decision_log import _heuristic
+            parts = []
+            for message in state.messages or []:
+                if isinstance(message, dict):
+                    parts.append(str(message.get("content") or ""))
+            content = "\n".join(parts)
+            heuristic = _heuristic(content[:8000]) if content else {}
+        except Exception:
+            heuristic = {}
+        if heuristic:
+            metadata["heuristic_tier"] = heuristic.get("tier")
+            metadata["heuristic_score"] = "{:.3f}".format(float(heuristic.get("score") or 0))
+            metadata["heuristic_signals"] = ", ".join(heuristic.get("signals") or [])
+            details = []
+            for item in heuristic.get("dimensions") or []:
+                if item.get("signal"):
+                    details.append("{} weight={} score={} contribution={:.3f} signal={}".format(item["name"], item["weight"], item["score"], item["contribution"], item["signal"]))
+            metadata["weight_details"] = "; ".join(details)
+        try:
+            record_auto_route(decision, heuristic)
+        except Exception:
+            EXPORT_ERRORS.inc()
+            LOG.exception("Cannot record auto-route metrics")
         metadata.update({"usage_raw": raw, "timing_source": "gateway_stream_iterator", "stream_output_frames": state.frames,
                          "upstream_model": kwargs.get("model"),
                          "reasoning_usage_available": "reasoning_tokens" in as_dict(raw.get("completion_tokens_details", raw.get("output_tokens_details"))),
@@ -466,7 +589,7 @@ class GatewayObservability(CustomLogger):
         attributes = {"langfuse.observation.type": "generation", "langfuse.observation.model.name": model,
                       "langfuse.observation.input": dumps(state.messages), "langfuse.observation.output": dumps(output),
                       "langfuse.observation.metadata": dumps(metadata),
-                      "langfuse.trace.metadata": dumps(state.source),
+                      "langfuse.trace.metadata": dumps({**state.source, **{k: metadata[k] for k in ("requested_model", "routed_model", "context_tier", "route_cause", "route_signals", "heuristic_tier", "heuristic_score", "heuristic_signals", "weight_details") if metadata.get(k) not in (None, "")}}),
                       "client.address": state.source["source_ip"],
                       "langfuse.environment": os.getenv("LANGFUSE_TRACING_ENVIRONMENT", "wsl-local")}
         if state.tools:
@@ -474,8 +597,15 @@ class GatewayObservability(CustomLogger):
         for key, attr in (("session_id", "session.id"), ("trace_user_id", "user.id"), ("trace_name", "langfuse.trace.name")):
             if state.metadata.get(key):
                 attributes[attr] = str(state.metadata[key])
-        if state.metadata.get("tags"):
-            attributes["langfuse.trace.tags"] = state.metadata["tags"]
+        tags = [str(tag) for tag in (state.metadata.get("tags") or [])]
+        if metadata.get("routed_model"):
+            tags.append("model:" + str(metadata["routed_model"]))
+        if metadata.get("context_tier"):
+            tags.append("tier:" + str(metadata["context_tier"]))
+        if metadata.get("heuristic_tier"):
+            tags.append("heuristic:" + str(metadata["heuristic_tier"]))
+        if tags:
+            attributes["langfuse.trace.tags"] = tags
         if usage:
             attributes["langfuse.observation.usage_details"] = dumps(usage)
         if costs:

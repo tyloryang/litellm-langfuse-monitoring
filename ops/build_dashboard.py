@@ -13,6 +13,9 @@ y = 0
 
 
 def legend(expression):
+    for label in ("signal", "route_cause", "context_tier", "routed_model", "heuristic_tier"):
+        if "sum by (%s)" % label in expression:
+            return "{{%s}}" % label
     percentile = re.search(r"histogram_quantile\(([\d.]+)", expression)
     if percentile:
         return "P" + str(round(float(percentile[1]) * 100))
@@ -52,11 +55,13 @@ def row(title):
 
 
 def panel(title, expressions, unit="short", description="", kind="timeseries", width=8, x=0,
-          height=7, thresholds=None, legends=None):
+          height=7, thresholds=None, legends=None, table_fields=None, sort_by=None, decimals=None):
     expressions = [expressions] if isinstance(expressions, str) else expressions
     default = {"unit": unit, "decimals": 2, "noValue": "暂无样本", "color": {"mode": "palette-classic"},
                "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": None},
                                 {"color": "orange", "value": 80}, {"color": "red", "value": 95}]}}
+    if decimals is not None:
+        default["decimals"] = decimals
     if thresholds:
         default["thresholds"]["steps"] = [{"color": "green", "value": None}] + [{"color": c, "value": v} for v, c in thresholds]
     if unit == "percent":
@@ -74,7 +79,7 @@ def panel(title, expressions, unit="short", description="", kind="timeseries", w
                 "orientation": "auto", "textMode": "value_and_name", "colorMode": "value",
                 "graphMode": "area", "justifyMode": "auto"})
     if kind == "table":
-        options = {"showHeader": True, "cellHeight": "sm", "sortBy": [{"displayName": "总 Token", "desc": True}]}
+        options = {"showHeader": True, "cellHeight": "sm", "sortBy": [{"displayName": sort_by or "总 Token", "desc": True}]}
     description = panel_description(title, unit, description, expressions)
     panels.append({"id": len(panels) + 1, "title": title, "description": description, "type": kind,
                    "gridPos": {"x": x, "y": y, "w": width, "h": height}, "datasource": DS,
@@ -83,7 +88,27 @@ def panel(title, expressions, unit="short", description="", kind="timeseries", w
                                 "instant": kind in {"stat", "table"}, "range": kind not in {"stat", "table"},
                                 **({"format": "table"} if kind == "table" else {}),
                                 "datasource": DS} for i, expr in enumerate(expressions)]})
-    if kind == "table":
+    if kind == "table" and table_fields:
+        rename = {}
+        for source, label, _width in table_fields:
+            rename[source] = label
+            if source == "Value":
+                rename["Value #A"] = label
+        panels[-1]["transformations"] = [
+            {"id": "organize", "options": {
+                "excludeByName": {"Time": True, **{f"Time {i}": True for i in range(1, len(expressions) + 1)}},
+                "renameByName": rename,
+            }},
+        ]
+        panels[-1]["fieldConfig"]["defaults"].update(
+            custom={"align": "auto", "minWidth": 70, "cellOptions": {"type": "auto"}})
+        panels[-1]["fieldConfig"]["overrides"] = [
+            {"matcher": {"id": "byName", "options": label}, "properties": [
+                {"id": "custom.width", "value": width},
+                *([{"id": "unit", "value": "string"}] if source != "Value" else [])]}
+            for source, label, width in table_fields
+        ]
+    elif kind == "table":
         panels[-1]["transformations"] = [
             {"id": "joinByField", "options": {"byField": "source_ip", "mode": "outerTabular"}},
             {"id": "organize", "options": {
@@ -101,7 +126,6 @@ def panel(title, expressions, unit="short", description="", kind="timeseries", w
                 *([{"id": "unit", "value": "string"}] if name == "来源 IP" else [])]}
             for name, width in [("来源 IP", 125), ("输入 Token", 94), ("输出 Token", 94), ("总 Token", 94), ("请求数", 78)]
         ]
-
 
 def band(items, width=8, height=7, kind="timeseries"):
     global y
@@ -229,6 +253,38 @@ for item in panels:
     if item["title"] in {"来源统计持久化状态", "来源统计开始时间", "来源统计写入失败"}:
         item["options"]["textMode"] = "value"
 
+
+row("08 · 自动路由 / 上下文档位与启发式权重")
+SEL = '{requested_model=~"$gateway_model",routed_model=~"$routed_model",context_tier=~"$context_tier"}'
+ROUTES = "llm_gateway_auto_routes_total" + SEL
+band([
+    ("自动路由请求速率 · 上下文档位", f"sum by (context_tier) (rate({ROUTES}[$__rate_interval]))", "reqps", "上下文长度决定模型。短请求即使启发式为 COMPLEX，仍然留在对应的小窗口档位。"),
+    ("自动路由请求速率 · 路由模型", f"sum by (routed_model) (rate({ROUTES}[$__rate_interval]))", "reqps", "实际转发的模型名。上下文放不下时，LiteLLM 升级到下一个档位。"),
+    ("启发式档位速率", f"sum by (heuristic_tier) (rate({ROUTES}[$__rate_interval]))", "reqps", "官方启发式档位只解释内容特征，不改变 context_tier 选出的模型。"),
+])
+band([
+    ("启发式分数 P50 / P95 / P99", [quantile("llm_gateway_heuristic_score", SEL, q) for q in (.5, .95, .99)], "short", "score = Σ(维度分 × 权重)。分界为 0.15 / 0.35 / 0.60。小于 0 的分数不进入 histogram。"),
+    ("已触发信号次数", f"sum by (signal) (increase(llm_gateway_route_signal_firings_total{SEL}[$__range]))", "short", "只统计 signal 非空的官方维度。未触发的维度不出现。"),
+], width=12)
+band([
+    ("已触发信号平均贡献", f"sum by (signal) (delta(llm_gateway_route_signal_contribution{SEL}[$__range])) / clamp_min(sum by (signal) (increase(llm_gateway_route_signal_firings_total{SEL}[$__range])), 0.000001)", "short", "分子是维度分乘权重后的带符号窗口增量，不是配置权重。"),
+    ("路由原因分布", f"sum by (route_cause) (increase({ROUTES}[$__range]))", "short", "classifier_plugin 表示自定义 token classifier 决定档位。未知原因合并为 other。"),
+], width=12)
+for item in panels:
+    if item["title"] in {"启发式分数 P50 / P95 / P99", "已触发信号平均贡献"}:
+        item["fieldConfig"]["defaults"]["decimals"] = 3
+panel("自动路由结果", f"sum by (context_tier, routed_model, heuristic_tier, route_cause) (increase({ROUTES}[$__range]))",
+      "short", "同一请求同时显示上下文档位、实际模型和启发式档位。启发式档位不是选模依据。",
+      kind="table", width=16, x=0, height=8, sort_by="请求数", decimals=2,
+      table_fields=[("context_tier", "上下文档位", 140), ("routed_model", "路由模型", 120),
+                    ("heuristic_tier", "启发式档位", 130), ("route_cause", "路由原因", 180), ("Value", "请求数", 90)])
+panel("启发式维度权重", "llm_gateway_route_signal_weight", "short",
+      "首次自动路由后，从官方 scorer 读出全部维度权重，包括尚未触发的维度。",
+      kind="table", width=8, x=16, height=8, sort_by="权重", decimals=2,
+      table_fields=[("signal", "维度", 180), ("Value", "权重", 80)])
+y += 8
+
+
 metric_count = sum(item["type"] != "row" for item in panels)
 
 
@@ -239,15 +295,17 @@ def variable(name, label, query):
 
 
 dashboard = {"id": None, "uid": "litellm-gpu-overview", "title": "LLM 推理观测 · Strata / LiteLLM / GPU",
-             "description": f"全部 {metric_count} 个指标面板均标注计算公式、单位、统计窗口和实际 PromQL；第 07 区按来源 IP 统计 Token；点击面板信息图标查看。",
+             "description": f"全部 {metric_count} 个指标面板均标注计算公式、单位、统计窗口和实际 PromQL；第 07 区按来源 IP 统计 Token，第 08 区展示自动路由的上下文档位、实际模型和已触发启发式权重；点击面板信息图标查看。",
              "tags": ["LLM", "Strata", "LiteLLM", "GPU", "Langfuse"], "timezone": "browser", "schemaVersion": 39,
-             "version": 4, "editable": True, "graphTooltip": 1, "refresh": "10s", "time": {"from": "now-1h", "to": "now"},
+             "version": 5, "editable": True, "graphTooltip": 1, "refresh": "10s", "time": {"from": "now-1h", "to": "now"},
              "annotations": {"list": []}, "links": [{"type": "link", "title": f"计算公式与指标口径（{metric_count} 面板）",
                  "url": REFERENCE_URL, "targetBlank": True, "icon": "doc", "includeVars": False, "keepTime": False}], "panels": panels,
              "templating": {"list": [{"name": "DS_PROMETHEUS", "label": "数据源", "type": "datasource", "query": "prometheus",
                                       "current": {}, "options": [], "refresh": 1},
                                      variable("gateway_model", "网关模型", "label_values(litellm_proxy_total_requests_metric_total, requested_model)"),
                                      variable("source_ip", "来源 IP", 'label_values(llm_gateway_source_requests_total, source_ip)'),
+                                     variable("routed_model", "路由模型", "label_values(llm_gateway_auto_routes_total, routed_model)"),
+                                     variable("context_tier", "上下文档位", "label_values(llm_gateway_auto_routes_total, context_tier)"),
                                      variable("engine_model", "引擎模型", "label_values(llm:engine_requests_running, model)"),
                                      variable("deployment", "部署", "label_values(llm:gpu_utilization_percent, deployment)"),
                                      variable("gpu", "GPU", 'label_values(llm:gpu_utilization_percent{deployment=~"$deployment"}, gpu)')]}}

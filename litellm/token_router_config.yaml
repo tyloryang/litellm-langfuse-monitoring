@@ -1,0 +1,91 @@
+# LiteLLM Auto Routing, validated on LiteLLM 1.106.6.
+# https://docs.litellm.ai/docs/proxy/auto_routing
+# qwen-auto classifies by token count. Context-window escalation moves a
+# request to the next larger tier when the selected tier cannot hold it.
+# Replace api_base and remove mock_response to attach real 32k/64k/128k/256k models.
+
+model_list:
+  - model_name: qwen-32k
+    litellm_params:
+      model: openai/qwen-32k
+      api_base: http://127.0.0.1:8080/v1
+      api_key: local-trial
+      mock_response: "routed to qwen-32k"
+    model_info:
+      id: qwen-32k
+      max_input_tokens: 32768
+
+  - model_name: qwen-64k
+    litellm_params:
+      model: openai/qwen-64k
+      api_base: http://127.0.0.1:8080/v1
+      api_key: local-trial
+      mock_response: "routed to qwen-64k"
+    model_info:
+      id: qwen-64k
+      max_input_tokens: 65536
+
+  - model_name: qwen-128k
+    litellm_params:
+      model: openai/qwen-128k
+      api_base: http://127.0.0.1:8080/v1
+      api_key: local-trial
+      mock_response: "routed to qwen-128k"
+    model_info:
+      id: qwen-128k
+      max_input_tokens: 131072
+
+  - model_name: qwen-256k
+    litellm_params:
+      model: openai/qwen-256k
+      api_base: http://127.0.0.1:8080/v1
+      api_key: local-trial
+      mock_response: "routed to qwen-256k"
+    model_info:
+      id: qwen-256k
+      max_input_tokens: 262144
+
+  - model_name: qwen-auto
+    litellm_params:
+      model: auto_router/complexity_router
+      drop_params: true
+      complexity_router_default_model: qwen-256k
+      complexity_router_config:
+        tier_definitions:
+          - name: CONTEXT_32K
+            description: Requests that fit a 32768-token context window.
+          - name: CONTEXT_64K
+            description: Requests that need more than 32768 tokens and fit in 65536.
+          - name: CONTEXT_128K
+            description: Requests that need more than 65536 tokens and fit in 131072.
+          - name: CONTEXT_256K
+            description: Requests that need more than 131072 tokens and fit in 262144.
+        tiers:
+          CONTEXT_32K: qwen-32k
+          CONTEXT_64K: qwen-64k
+          CONTEXT_128K: qwen-128k
+          CONTEXT_256K: qwen-256k
+        classifier_type: custom
+        classifier_plugin: context_tier_classifier.classifier
+        fallback_tier: CONTEXT_256K
+        enable_context_window_escalation: true
+        context_window_escalation_buffer: 1.0
+        return_raw_model_name: true
+
+litellm_settings:
+  drop_params: true
+  # Trial metrics are scraped inside the lab network. Production config.yaml keeps metrics authentication.
+  require_auth_for_metrics_endpoint: false
+  callbacks:
+    - prometheus
+    - routing_decision_log.handler
+    - observability_callback.observability
+
+general_settings:
+  # This mock trial has no master key and listens on localhost only.
+  # Do not copy this switch into the production proxy.
+  dangerously_permit_weak_or_unset_master_key: true
+
+router_settings:
+  routing_strategy: simple-shuffle
+  enable_pre_call_checks: true
