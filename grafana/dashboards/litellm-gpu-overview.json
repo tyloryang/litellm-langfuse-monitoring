@@ -2,7 +2,7 @@
   "id": null,
   "uid": "litellm-gpu-overview",
   "title": "LLM 推理观测 · Strata / LiteLLM / GPU",
-  "description": "全部 59 个指标面板均标注计算公式、单位、统计窗口和实际 PromQL；第 07 区按来源 IP 统计 Token；点击面板信息图标查看。",
+  "description": "全部 68 个指标面板均标注计算公式、单位、统计窗口和实际 PromQL；第 07 区按来源 IP 统计 Token，第 08 区展示自动路由的上下文档位、实际模型和已触发启发式权重；点击面板信息图标查看。",
   "tags": [
     "LLM",
     "Strata",
@@ -12,7 +12,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "10s",
@@ -26,7 +26,7 @@
   "links": [
     {
       "type": "link",
-      "title": "计算公式与指标口径（59 面板）",
+      "title": "计算公式与指标口径（68 面板）",
       "url": "https://github.com/tyloryang/litellm-langfuse-monitoring/blob/main/docs/grafana-formulas.md",
       "targetBlank": true,
       "icon": "doc",
@@ -5591,6 +5591,927 @@
           }
         }
       ]
+    },
+    {
+      "id": 67,
+      "title": "08 · 自动路由 / 上下文档位与启发式权重",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 138,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 68,
+      "title": "自动路由请求速率 · 上下文档位",
+      "description": "**计算公式**\n\n`rate_tier = Σ rate(llm_gateway_auto_routes_total[W])`，按 `context_tier` 分组。\n\n**统计口径与边界**\n\n只统计 LiteLLM 写出 routing_decision 的已完成请求。context_tier 由自定义 classifier 按输入和预留输出 Token 选为 CONTEXT_32K / 64K / 128K / 256K，并决定 routed_model。启发式档位不参与选模。W = $__rate_interval。模型名、档位和原因只保留有限枚举，提示词原文不会成为标签；枚举外的值合并为 other。\n\n上下文长度决定模型。短请求即使启发式为 COMPLEX，仍然留在对应的小窗口档位。\n\n**单位**：请求 / 秒。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (context_tier) (rate(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval]))\n```",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 139,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "noValue": "暂无样本",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (context_tier) (rate(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval]))",
+          "legendFormat": "{{context_tier}}",
+          "instant": false,
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 69,
+      "title": "自动路由请求速率 · 路由模型",
+      "description": "**计算公式**\n\n`rate_model = Σ rate(llm_gateway_auto_routes_total[W])`，按 `routed_model` 分组。\n\n**统计口径与边界**\n\nrouted_model 是实际转发的模型，当前为 qwen-32k / qwen-64k / qwen-128k / qwen-256k。请求能放进哪个窗口，就进哪个模型；放不下时由 LiteLLM 的 context-window escalation 升档。不要用启发式 COMPLEX 解释为已经改派到更大的模型。\n\n实际转发的模型名。上下文放不下时，LiteLLM 升级到下一个档位。\n\n**单位**：请求 / 秒。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (routed_model) (rate(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval]))\n```",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 139,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "noValue": "暂无样本",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (routed_model) (rate(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval]))",
+          "legendFormat": "{{routed_model}}",
+          "instant": false,
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 70,
+      "title": "启发式档位速率",
+      "description": "**计算公式**\n\n`rate_heuristic = Σ rate(llm_gateway_auto_routes_total[W])`，按 `heuristic_tier` 分组。\n\n**统计口径与边界**\n\nheuristic_tier 是官方 ComplexityRouter 的 SIMPLE / MEDIUM / COMPLEX / REASONING，只描述内容特征。它和上下文档位是两套结果：短请求可以同时是 CONTEXT_32K 和 COMPLEX。没有启发式结果时记为 unknown，不补成 SIMPLE。\n\n官方启发式档位只解释内容特征，不改变 context_tier 选出的模型。\n\n**单位**：请求 / 秒。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (heuristic_tier) (rate(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval]))\n```",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 139,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "noValue": "暂无样本",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (heuristic_tier) (rate(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval]))",
+          "legendFormat": "{{heuristic_tier}}",
+          "instant": false,
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 71,
+      "title": "启发式分数 P50 / P95 / P99",
+      "description": "**计算公式**\n\n`score = Σ(dimension_score × dimension_weight)`。默认权重为 tokenCount 0.10、codePresence 0.30、reasoningMarkers 0.25、technicalTerms 0.25、simpleIndicators 0.05、multiStepPatterns 0.03、questionComplexity 0.02。分界为 simple/medium 0.15、medium/complex 0.35、complex/reasoning 0.60。面板对该 histogram 计算 `Q(0.50)`、`Q(0.95)`、`Q(0.99)`。\n\n**统计口径与边界**\n\n只把 score ≥ 0 的自动路由请求观察进 histogram。simpleIndicators 的维度分可以为 −1，总分小于 0 时不进入本图，但仍计入路由次数和信号贡献。分数解释内容，不选择模型。桶内分位是估计值，样本少时不稳定。\n\nscore = Σ(维度分 × 权重)。分界为 0.15 / 0.35 / 0.60。小于 0 的分数不进入 histogram。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm_gateway_heuristic_score_bucket{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm_gateway_heuristic_score_bucket{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval])))\n```\n\n查询 C：\n```promql\nhistogram_quantile(0.99, sum by (le) (rate(llm_gateway_heuristic_score_bucket{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval])))\n```",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 146,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 3,
+          "noValue": "暂无样本",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_gateway_heuristic_score_bucket{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval])))",
+          "legendFormat": "P50",
+          "instant": false,
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_gateway_heuristic_score_bucket{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval])))",
+          "legendFormat": "P95",
+          "instant": false,
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(llm_gateway_heuristic_score_bucket{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__rate_interval])))",
+          "legendFormat": "P99",
+          "instant": false,
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 72,
+      "title": "已触发信号次数",
+      "description": "**计算公式**\n\n`firings_signal = Σ increase(llm_gateway_route_signal_firings_total[R])`，按官方维度名分组。\n\n**统计口径与边界**\n\n只有 signal 非空的维度加 1。未触发的维度保留在权重表中，但不会出现在本图。允许的维度名只有 tokenCount、codePresence、reasoningMarkers、technicalTerms、simpleIndicators、multiStepPatterns、questionComplexity。R = $__range，曲线最右端就是所选时段，不要再把整条曲线求和。\n\n只统计 signal 非空的官方维度。未触发的维度不出现。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (signal) (increase(llm_gateway_route_signal_firings_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range]))\n```",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 146,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "noValue": "暂无样本",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (signal) (increase(llm_gateway_route_signal_firings_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range]))",
+          "legendFormat": "{{signal}}",
+          "instant": false,
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 73,
+      "title": "已触发信号平均贡献",
+      "description": "**计算公式**\n\n`avg_contribution_signal = Δ(llm_gateway_route_signal_contribution[R]) / max(Σ increase(firings_signal[R]), 10⁻⁶)`，其中单次 `contribution = dimension_score × weight`。\n\n**统计口径与边界**\n\n分子是带符号 gauge 的窗口增量，simpleIndicators 可以是负数，所以不能使用 Prometheus counter。分母只包含已触发次数。结果是该窗口内已触发信号的平均贡献，不是配置权重；权重见旁边的维度权重面板。进程重启后累计值从 0 重新开始。\n\n分子是维度分乘权重后的带符号窗口增量，不是配置权重。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (signal) (delta(llm_gateway_route_signal_contribution{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range])) / clamp_min(sum by (signal) (increase(llm_gateway_route_signal_firings_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range])), 0.000001)\n```",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 153,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 3,
+          "noValue": "暂无样本",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (signal) (delta(llm_gateway_route_signal_contribution{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range])) / clamp_min(sum by (signal) (increase(llm_gateway_route_signal_firings_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range])), 0.000001)",
+          "legendFormat": "{{signal}}",
+          "instant": false,
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 74,
+      "title": "路由原因分布",
+      "description": "**计算公式**\n\n`routes_cause = Σ increase(llm_gateway_auto_routes_total[R])`，按 `route_cause` 分组。\n\n**统计口径与边界**\n\nroute_cause 取 LiteLLM routing_decision.cause 的有限枚举。classifier_plugin 表示自定义 token classifier 选出了档位；不在 LiteLLM 1.106.6 枚举中的原因合并为 other。曲线最右端是所选时段的次数，increase 可能因采样边界而不是整数。\n\nclassifier_plugin 表示自定义 token classifier 决定档位。未知原因合并为 other。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (route_cause) (increase(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range]))\n```",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 153,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "noValue": "暂无样本",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route_cause) (increase(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range]))",
+          "legendFormat": "{{route_cause}}",
+          "instant": false,
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 75,
+      "title": "自动路由结果",
+      "description": "**计算公式**\n\n每个 `(context_tier, routed_model, heuristic_tier, route_cause)` 组合计算 `requests = Σ increase(llm_gateway_auto_routes_total[R])`。\n\n**统计口径与边界**\n\n当前时点的 instant 表，按请求数降序。四个标签一起标识一组路由结果，用来对照“内容落在哪个窗口”和“启发式认为内容有多复杂”。启发式档位不是选模依据。increase 是采样估算，窗口边界和首次抓取会使结果出现小数。\n\n同一请求同时显示上下文档位、实际模型和启发式档位。启发式档位不是选模依据。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (context_tier, routed_model, heuristic_tier, route_cause) (increase(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range]))\n```",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 160,
+        "w": 16,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "noValue": "暂无样本",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "custom": {
+            "align": "auto",
+            "minWidth": 70,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "上下文档位"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 140
+              },
+              {
+                "id": "unit",
+                "value": "string"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "路由模型"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "unit",
+                "value": "string"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "启发式档位"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 130
+              },
+              {
+                "id": "unit",
+                "value": "string"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "路由原因"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 180
+              },
+              {
+                "id": "unit",
+                "value": "string"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "请求数"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "请求数",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (context_tier, routed_model, heuristic_tier, route_cause) (increase(llm_gateway_auto_routes_total{requested_model=~\"$gateway_model\",routed_model=~\"$routed_model\",context_tier=~\"$context_tier\"}[$__range]))",
+          "legendFormat": "{{requested_model}}",
+          "instant": true,
+          "range": false,
+          "format": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true
+            },
+            "renameByName": {
+              "context_tier": "上下文档位",
+              "routed_model": "路由模型",
+              "heuristic_tier": "启发式档位",
+              "route_cause": "路由原因",
+              "Value": "请求数",
+              "Value #A": "请求数"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 76,
+      "title": "启发式维度权重",
+      "description": "**计算公式**\n\n官方默认 `weight(tokenCount)=0.10`、`weight(codePresence)=0.30`、`weight(reasoningMarkers)=0.25`、`weight(technicalTerms)=0.25`、`weight(simpleIndicators)=0.05`、`weight(multiStepPatterns)=0.03`、`weight(questionComplexity)=0.02`。`score = Σ(dimension_score × weight)`。\n\n**统计口径与边界**\n\n面板读取进程内官方 scorer 的当前配置，不是从历史流量反推。首次完成自动路由时写入全部维度，包括尚未触发的维度。LiteLLM 升级或权重配置变化后，以新进程实际值为准；默认值只是 1.106.6 的对照，不在查询里写死。\n\n首次自动路由后，从官方 scorer 读出全部维度权重，包括尚未触发的维度。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nllm_gateway_route_signal_weight\n```",
+      "type": "table",
+      "gridPos": {
+        "x": 16,
+        "y": 160,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "noValue": "暂无样本",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "custom": {
+            "align": "auto",
+            "minWidth": 70,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "维度"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 180
+              },
+              {
+                "id": "unit",
+                "value": "string"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "权重"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "权重",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "llm_gateway_route_signal_weight",
+          "legendFormat": "{{model}}",
+          "instant": true,
+          "range": false,
+          "format": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true
+            },
+            "renameByName": {
+              "signal": "维度",
+              "Value": "权重",
+              "Value #A": "权重"
+            }
+          }
+        }
+      ]
     }
   ],
   "templating": {
@@ -5640,6 +6561,54 @@
         "query": {
           "query": "label_values(llm_gateway_source_requests_total, source_ip)",
           "refId": "source_ip"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "name": "routed_model",
+        "label": "路由模型",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(llm_gateway_auto_routes_total, routed_model)",
+        "query": {
+          "query": "label_values(llm_gateway_auto_routes_total, routed_model)",
+          "refId": "routed_model"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "name": "context_tier",
+        "label": "上下文档位",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(llm_gateway_auto_routes_total, context_tier)",
+        "query": {
+          "query": "label_values(llm_gateway_auto_routes_total, context_tier)",
+          "refId": "context_tier"
         },
         "refresh": 1,
         "includeAll": true,

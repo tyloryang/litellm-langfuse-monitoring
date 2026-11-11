@@ -21,7 +21,7 @@
 | 来源用量账本 | 按来源 IP 和模型去重累计 Token，使用 SQLite 持久化，并导出 Prometheus 指标 | 支持按 IP 查询时段用量和重启后累计值 |
 | 客户端示例 | 用 Langfuse SDK 创建真实 AGENT / TOOL，并通过 `traceparent` 把两次模型调用挂到同一 Trace | 区分“模型提出工具调用”和“客户端实际执行工具” |
 | Strata 补充导出器 | 把 Monitor JSON 中的 PCIe、磁盘、缓存和最近请求字段转换为 Prometheus 指标 | 补齐 Strata 原生指标没有暴露的数据 |
-| Prometheus 规则与 Grafana 看板 | 统一引擎、模型、GPU、来源 IP、单位和统计窗口 | 提供 59 个面板、7 个分区和 94 条查询 |
+| Prometheus 规则与 Grafana 看板 | 统一引擎、模型、GPU、来源 IP、单位和统计窗口 | 提供 68 个面板、8 个分区和 105 条查询 |
 | Nginx 与部署工具 | 提供 TLS 入口、覆盖转发头、限制指标入口，准备镜像和离线包 | 固定代理信任边界和离线交付方式 |
 
 Langfuse 的 Trace、Metadata、Session、User 和筛选能力仍由 Langfuse 原生服务提供。来源校验、usage 归一化、流式计时和 Generation 上报来自本项目的 LiteLLM 回调；业务侧的 AGENT / TOOL 节点需要接入方在实际执行位置埋点。
@@ -103,7 +103,7 @@ Nginx 访问日志当前写入本地文件，仓库没有配置日志采集后�
 | `litellm/` | 模型路由、自定义回调、Prometheus 回调配置 | 必需 | 必需 |
 | `nginx/` | API、Langfuse 和指标入口；TLS 与代理头策略 | 必需 | 必需 |
 | `prometheus/` | 抓取片段、16 条 Recording Rule 和 9 条告警规则 | 必需，合并到新建 Prometheus | 必需，合并到既有 Prometheus |
-| `grafana/dashboards/` | 59 面板、94 查询的推理观测看板 | 必需，导入新建 Grafana | 必需，导入既有 Grafana |
+| `grafana/dashboards/` | 68 面板、105 查询的推理观测看板 | 必需，导入新建 Grafana | 必需，导入既有 Grafana |
 | `exporters/` | Strata Monitor JSON 补充导出器 | 使用 Strata 时必需 | 使用 Strata 时必需 |
 | `offline/` | DDN amd64 镜像映射、新装候选镜像变量和 WSL 实际换源清单 | 制作离线镜像包时必需 | 只准备新增组件的镜像时使用 |
 | `ops/pull-from-ddn.sh` | 在联网准备机按平台和 digest 拉取 DDN 镜像 | 制作镜像包时必需 | 新增组件没有本地镜像时使用 |
@@ -182,7 +182,7 @@ Prometheus、Grafana 和推理引擎不在这个 Compose 文件中。离线包�
 4. 将 `prometheus/recording-rules.yml` 和 `prometheus/alerts.yml` 加入现有 `rule_files`。先运行 `promtool check config` 和 `promtool check rules`，再按现有运维方式 reload。
 5. 将 `grafana/dashboards/litellm-gpu-overview.json` 导入已有 Grafana，绑定已有 Prometheus 数据源。若使用 provisioning，保持看板 UID 和文件权限一致。
 6. 使用 Strata 时，在能访问 Monitor JSON、且能被 Prometheus 抓取的主机运行补充导出器；使用其他推理引擎时不部署该服务，并按实际指标调整面板和验收项。
-7. 用 `ops/verify_runtime.py` 检查所有 Prometheus target、94 条 PromQL、真实流式请求、Langfuse Trace 和来源累计值。复用服务不等于跳过版本兼容和数据备份。
+7. 用 `ops/verify_runtime.py` 检查所有 Prometheus target、105 条 PromQL、真实流式请求、Langfuse Trace 和来源累计值。复用服务不等于跳过版本兼容和数据备份。
 
 复用现有服务后，VM-01 仍需离线准备 9 个核心镜像、回调依赖和运行配置。现有 Prometheus / Grafana 也必须能够在不访问公网插件站、镜像仓库或软件源的情况下加载本项目配置。
 
@@ -224,7 +224,7 @@ LANGFUSE_TRACING_ENVIRONMENT=production
 
 ## 6. 已验证环境与验收标准
 
-WSL 复用环境已经验证 LiteLLM 1.106.6、Langfuse 服务 4.73.0、Langfuse Python SDK 4.18.0，以及真实 Strata 流式推理、工具执行、来源 IP 和 Grafana 看板。59 个面板分为实时总览、延迟、Token 与质量、缓存与上下文、硬件、数据质量、来源 IP 与用量 7 个分区；公式和 PromQL 见[Grafana 指标说明](docs/grafana-formulas.md)。
+WSL 复用环境已经验证 LiteLLM 1.106.6、Langfuse 服务 4.73.0、Langfuse Python SDK 4.18.0，以及真实 Strata 流式推理、工具执行、来源 IP 和 Grafana 看板。看板现为 68 个面板、8 个分区和 105 条查询，分为实时总览、延迟、Token 与质量、缓存与上下文、硬件、数据质量、来源 IP 与用量、自动路由；公式和 PromQL 见[Grafana 指标说明](docs/grafana-formulas.md)。
 
 在该已知 WSL 布局中，可以先预览再部署：
 
@@ -240,7 +240,7 @@ wsl -d Ubuntu-24.04 -- env LITELLM_LOCAL_MODEL_COST_MAP=True /home/YOUR_USER/llm
 1. LiteLLM 能通过真实 loader 加载回调，服务健康，部署范围内的 Prometheus target 全部为 UP。
 2. 每个模型分别完成非流式和带 usage 的流式请求；Langfuse 中输入、输出、Token、TTFT、Session 和 User 完整。
 3. 工具链在同一个 Trace 中包含一个 AGENT、一次真实 TOOL 执行和两次 GENERATION，父子关系正确。
-4. 94 条 PromQL 可以执行，现场承诺的 Token、时延、GPU 和缓存指标有真实样本；两个来源的累计差值与响应 usage 一致，伪造来源头不能改变归属。
+4. 105 条 PromQL 可以执行，现场承诺的 Token、时延、GPU 和缓存指标有真实样本；两个来源的累计差值与响应 usage 一致，伪造来源头不能改变归属。
 5. 在断网条件下完成冷启动、主机重启、来源账本和 Langfuse 数据持久化，以及备份恢复验证。
 
 验收结果记录在[离线验收模板](docs/offline-acceptance-template.md)。文件哈希、Compose 语法和容器启动只能证明物料或进程状态，不能替代真实推理和数据链路验收。
@@ -256,5 +256,5 @@ wsl -d Ubuntu-24.04 -- env LITELLM_LOCAL_MODEL_COST_MAP=True /home/YOUR_USER/llm
 | [WSL DDN 换源记录](docs/wsl-ddn-migration.md) | 查看已换源组件、数据核对和回退方式 |
 | [观测缺失调查](docs/observability-findings.md) | 查看问题根因、配置证据和指标边界 |
 | [来源 IP 与 Token 用量](docs/source-ip-usage.md) | 查看来源校验、Token 对账、SQLite 备份和恢复 |
-| [Grafana 公式与口径](docs/grafana-formulas.md) | 查看 59 个面板的公式、PromQL、单位和统计窗口 |
+| [Grafana 公式与口径](docs/grafana-formulas.md) | 查看 68 个面板的公式、PromQL、单位和统计窗口 |
 | [离线验收模板](docs/offline-acceptance-template.md) | 记录现场环境、请求、Trace、指标、重启和恢复证据 |

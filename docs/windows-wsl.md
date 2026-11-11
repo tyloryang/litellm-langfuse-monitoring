@@ -108,7 +108,7 @@ wsl -d Ubuntu-24.04 -- bash /mnt/e/project/YOUR_PROJECT/litellm-langfuse-monitor
 wsl -d Ubuntu-24.04 -- bash /mnt/e/project/YOUR_PROJECT/litellm-langfuse-monitoring/ops/check.sh --exercise --trace-id a9880c8931c965de38f2bdcebca77c78
 ```
 
-脚本对 94 条面板查询执行真实 PromQL 检查，要求关键硬件与缓存有数值、必需目标健康。`--exercise` 核对 Langfuse 输入输出、usage 和 TTFT / TPOT；`--stream-trace-id` 复查既有流式记录。完整 JSON 在工作区 `.runtime/validation.json`，失败返回非零。
+脚本对 105 条面板查询执行真实 PromQL 检查，要求关键硬件与缓存有数值、必需目标健康。第 08 区读取 `llm_gateway_auto_routes_total`、启发式分数 histogram 和已触发信号贡献。试运行 API 留在 `127.0.0.1:4010`；`ops/token_router_metrics_bridge.py` 只把 `/metrics` 转发到 Docker bridge `172.18.0.1:4010`，Prometheus job 为 `token-router-trial`。生产网关 4000 未加载这条 Auto Router 时，该区没有样本。`--exercise` 核对 Langfuse 输入输出、usage 和 TTFT / TPOT；`--stream-trace-id` 复查既有流式记录。完整 JSON 在工作区 `.runtime/validation.json`，失败返回非零。
 
 来源校验可追加 `--source-trace-id 实际TraceID --expected-source-ip 入口可见IP`；等待至少两次抓取后，检查该 GENERATION 的来源、Prometheus 对应 IP / 模型累计值不小于该次 usage、持久化=1 / 写入错误=0。逐次精确差值与重启 / 备份恢复仍需按来源统计说明单独验收。
 

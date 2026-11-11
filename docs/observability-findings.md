@@ -19,7 +19,7 @@ JSON 导出器每 3 秒轮询，Prometheus 每 5 秒抓取 Strata。轮询失败
 
 ## 指标参考与口径
 
-**各面板计算公式见 [Grafana 看板计算公式与统计口径](grafana-formulas.md)**：包含全部 59 面板的原始计算、94 条实际 PromQL、固定 / 动态窗口、聚合权重及单位换算，同步显示在 Grafana 面板说明中。
+**各面板计算公式见 [Grafana 看板计算公式与统计口径](grafana-formulas.md)**：包含全部 68 面板的原始计算、105 条实际 PromQL、固定 / 动态窗口、聚合权重及单位换算，同步显示在 Grafana 面板说明中。
 
 GitHub star 是 2026-11-09 API 快照，用于选择生态参考：
 
@@ -50,7 +50,7 @@ GitHub star 是 2026-11-09 API 快照，用于选择生态参考：
 | 工具提议 | 模型输出 `tool_calls` 数 | 不代表已执行，执行结果到 Langfuse TOOL 查看 |
 | 成本 | 可选真实 USD / Token 价格 | 本地模型默认 unconfigured，0 不代表免费 |
 
-物理服务器还可经 DCGM 增加 SM / Tensor 活跃度、DRAM 活跃度、PCIe / NVLink、ECC / XID 等诊断。本机 Strata / WSL 未提供的字段不伪造。增加来源 IP 统计后实际接入 59 个指标面板，7 个 row 仅为分隔。
+物理服务器还可经 DCGM 增加 SM / Tensor 活跃度、DRAM 活跃度、PCIe / NVLink、ECC / XID 等诊断。本机 Strata / WSL 未提供的字段不伪造。增加来源 IP 统计后曾接入 59 个指标面板；自动路由分区加入后为 68 个指标面板，8 个 row 仅为分隔。
 
 P50 / P95 / P99 是抓取窗口中 histogram 的分位估计，少样本时受 bucket 精度限制。重启后只抓到第一条 counter 样本，或窗口内没有新请求时，速率 / 分位可以没有值；最近请求引擎值仍保留，不能填成 0 延迟。vLLM / SGLang KV 面板在本机 Strata 单引擎环境无数据是预期行为。
 

@@ -50,3 +50,12 @@
     - targets: ["10.0.0.13:9402"]
       labels: {engine: strata, deployment: gpu-vm-03}
 # Merge recording-rules.yml into rule_files as well as alerts.yml.
+
+# Local auto-router trial. Scrape only the lab proxy that loads observability_callback
+# and emits llm_gateway_auto_routes_total. Do not publish this port.
+# - job_name: token-router-trial
+#   scrape_interval: 15s
+#   metrics_path: /metrics/
+#   static_configs:
+#     - targets: ["172.18.0.1:4010"]
+#       labels: {service: token-router-trial, environment: wsl-local}
