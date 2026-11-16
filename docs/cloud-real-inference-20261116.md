@@ -26,7 +26,13 @@
 
 两条 Trace ID 均在 Langfuse ClickHouse `events_full` 中找到对应的 `GENERATION`，模型名为 `qwen3.8-flash-next-iq3_xxs`。经 Langfuse Web 的 `/api/public/v2/observations?traceId=...` 查询，两条均返回 HTTP 200 和一条对应 observation；浏览器 Tracing 页面也显示两条记录，流式详情显示输入、答案 `42`、102 tokens 和约 0.20 秒 TTFT。流式用量在事件中拆分为非缓存输入 5、缓存输入 63、可见输出 10、推理输出 24，总数仍为 102，不能将这些分项再与原始总量重复相加。
 
-当前模型未配置价格，页面显示无费用；这不是模型免费或成本为零的结论。本次请求从云主机回环进入网关，Trace 中的来源地址是容器网络地址，**没有验收公网客户端真实来源 IP**。本次只验证了 Generation，未执行真实 Agent / Tool 链、长上下文、并发负载或四档自动路由验收。
+当前模型未配置价格，页面显示无费用；这不是模型免费或成本为零的结论。本次请求从云主机回环进入网关，Trace 中的来源地址是容器网络地址，**没有验收公网客户端真实来源 IP**。本次未验收长上下文、并发负载或四档自动路由。
+
+## 真实工具链验证
+
+随后在 LiteLLM 容器内运行仓库 `examples/traced_tool_agent.py` 的云端适配副本，模型请求仍经 Nginx 进入网关；测试端对该容器网络内的自签证书跳过验证。真实模型提出 `add_numbers` 调用，客户端实际执行 `17 + 25` 得到 `42`，第二次模型调用回答 `42`。这是合成的单次工具链验证，不代表业务侧已经完成埋点。
+
+Langfuse Observations v2 按 Trace ID `93cdfbb9317bfcb2dd977e91b4a2f685` 返回四个节点：一个 `AGENT`（`c66ef8a30df6efb6`）、两个 `GENERATION` 和一个 `TOOL`（`add_numbers`）；两个 Generation 与 Tool 的 `parentObservationId` 均为该 Agent ID。应用侧负责实际工具执行及 Agent / Tool 节点，网关回调负责 Generation；只收到模型的 `tool_calls` 不能证明工具已经执行。现场脱敏输出位于云机 `/opt/llm-observability-deploy/logs/real-tool-validation-20261116.log`。
 
 ## Trace API 版本差异
 

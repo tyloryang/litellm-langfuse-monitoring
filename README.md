@@ -6,7 +6,7 @@
 
 [2026-11-16 离线候选包](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-candidate-amd64-20261116) 面向 Nginx、LiteLLM、Langfuse 及其存储依赖，包含 9 个服务镜像、Compose 和 CentOS 7 Docker RPM 候选；包文件以分卷发布。[下载、自动路由、Grafana 和麒麟 V10 验收说明](docs/offline-release-20261116.md)列出全部下载文件、合并校验方式、依赖缺口和已验证范围。此包已在 CentOS 7 同机隔离网络通过 mock 请求与 Langfuse 事件入库检查；麒麟 V10 依赖闭包、断网冷装和真实模型路由仍待验收。
 
-同一云服务器的双 A100 已完成 Strata 真实非流式 / 流式推理和 Langfuse Generation 验证，具体模型哈希、CUDA 12 配置、Trace ID 和验收范围见[云端真实推理记录](docs/cloud-real-inference-20261116.md)。该结果不替代麒麟 V10 的离线冷安装验收。
+同一云服务器的双 A100 已完成 Strata 真实非流式 / 流式推理，以及 Langfuse Generation 和合成工具链验证，具体模型哈希、CUDA 12 配置、Trace ID 和验收范围见[云端真实推理记录](docs/cloud-real-inference-20261116.md)。该结果不替代麒麟 V10 的离线冷安装验收。
 
 ## 1. 项目背景
 
