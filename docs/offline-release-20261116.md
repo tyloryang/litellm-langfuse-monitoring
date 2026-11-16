@@ -9,7 +9,7 @@
 | `nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.part01` 至 `part04` | 同一个 tar 的四段，必须全部下载 |
 | `SHA256SUMS` | 四个分卷和合并后 tar 的 SHA-256 |
 | `manifest.json` | 各分卷大小、SHA-256 与原始 tar 信息 |
-| `cloud-container-deployment-20261116.md` | 云端部署记录及离线迁移说明；仓库中的版本含截图链接 |
+| `source-and-docs.tar.gz` | 本次发布时的仓库源码与最新迁移手册，包含登录页截图和自动路由、Grafana 说明；不同于主包内的较早源码快照 |
 
 在具备 `sha256sum` 的 Linux 准备机上恢复并核验：
 
