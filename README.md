@@ -6,6 +6,8 @@
 
 > 运维从这里开始：[离线部署 README：包目录、配置和启动](docs/offline-deployment-README.md) · [逐步操作命令](docs/kylin-v10-offline-operations-step-by-step.md) · [下载离线包](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-reuse-amd64-20261116) · [完整离线手册](docs/kylin-v10-full-offline-deployment-20261116.md) · [Grafana 公式](docs/grafana-formulas.md)
 
+需要迁移云端已有 Trace 和项目数据时，另见 [云端历史数据离线恢复](docs/cloud-history-offline-restore-20261116.md)：加密备份及 SHA-256 在同一 Release，解密密钥通过受控渠道单独转交。
+
 ## 项目背景
 
 原有组件各自提供了网关、追踪、模型服务和指标，但现场仍需解决几个具体问题：

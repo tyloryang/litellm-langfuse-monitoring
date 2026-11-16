@@ -17,6 +17,7 @@ DOCS = (
     'cloud-real-inference-20261116.md', 'cloud-strata-json-log-audit-20261116.md',
     'cloud-strata-memlock-deployment-20261116.md', 'grafana-formulas.md',
     'offline-acceptance-template.md', 'kylin-v10-package-preparation.md',
+    'cloud-history-offline-restore-20261116.md',
 )
 FILES = (
     'nginx/nginx.conf', 'litellm/config.yaml', 'litellm/token_router_config.yaml',
@@ -25,6 +26,7 @@ FILES = (
     'examples/offline_tool_trace_check.py', 'ops/kylin-target-inventory.sh',
     'ops/kylin-download-rpms.sh', 'ops/kylin-rpm-offline-check.sh',
     'ops/kylin-verify-nvidia-metadata.py',
+    'ops/cloud-history-snapshot-example-20261116.sh',
 )
 
 

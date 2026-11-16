@@ -2,7 +2,9 @@
 
 目标：复用内网已有 Docker、Strata 与 Qwen 模型，离线部署或重部署 Nginx、LiteLLM、Langfuse；最后通过真实请求在 Langfuse 中看到调用链。本文是入口，逐条命令与故障处理在随包 `manual/docs/kylin-v10-offline-operations-step-by-step.md`。
 
-**目标麒麟 V10 尚未完成本项目的断网冷安装验收。** 软件包不包含 Strata 镜像、模型、GPU 驱动、真实账号或目标系统完整 RPM 依赖；这些需要已有或另行准备。不要以云端验证代替内网实际验收。
+**目标麒麟 V10 尚未完成本项目的断网冷安装验收。** 网关主包和手册更新包不包含 Strata 镜像、模型、GPU 驱动、真实账号或目标系统完整 RPM 依赖；这些需要已有或另行准备。不要以云端验证代替内网实际验收。
+
+若还需要迁移云端已有历史 Trace 和账号，请另外携带 Release 的加密 `cloud-history-20261116.tar.gz.gpg`、其 `.sha256`、独立的 `cloud-history-offline-restore-20261116-v3.md` 和通过受控渠道单独提供的解密密钥；按 [历史数据恢复手册](cloud-history-offline-restore-20261116.md) 使用新的独立目录恢复。此前发布的手册更新包为固定快照，历史恢复手册作为单独附件提供。
 
 ## 1. 携带哪些文件，解压后在哪里
 

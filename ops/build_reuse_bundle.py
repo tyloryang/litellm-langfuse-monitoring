@@ -137,6 +137,7 @@ def main():
     files.append(('README.md', ROOT / 'docs/offline-deployment-README.md'))
     docs = [
         'offline-deployment-README.md',
+        'cloud-history-offline-restore-20261116.md',
         'kylin-v10-reuse-offline-bundle-20261116.md',
         'kylin-v10-full-offline-deployment-20261116.md',
         'kylin-v10-offline-operations-step-by-step.md',
@@ -160,7 +161,8 @@ def main():
                 'examples/strata-iq3_xxs-cloud-4slot.example.json',
                 'examples/offline_tool_trace_check.py',
                 'ops/kylin-target-inventory.sh', 'ops/kylin-download-rpms.sh',
-                'ops/kylin-rpm-offline-check.sh', 'ops/kylin-verify-nvidia-metadata.py'):
+                'ops/kylin-rpm-offline-check.sh', 'ops/kylin-verify-nvidia-metadata.py',
+                'ops/cloud-history-snapshot-example-20261116.sh'):
         files.append(('manual/' + rel, ROOT / rel))
     candidates = ROOT / 'offline-bundle/kylin-v10-system-rpm-candidates-20261116'
     if digest(candidates / 'SHA256SUMS') != 'fa813af2d36c88f4ad8b594a6a81e976e2242b47472a3ca1da45e85984269d2f':
