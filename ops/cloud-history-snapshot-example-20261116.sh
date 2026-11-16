@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Historical cloud snapshot procedure; review host paths, services, keys and impact before reuse.
+# Snapshot procedure adapted from the historical cloud backup; review host paths,
+# services, keys and impact before reuse.
 set -Eeuo pipefail
 umask 077
 BASE=/opt/llm-observability-deploy/src/monitoring
@@ -9,7 +10,7 @@ CHPATH=/var/lib/clickhouse/backups/backups/codex-cloud-history-20261116.zip
 test -r "$KEY"
 test ! -e "$ROOT"
 docker exec llm-a100-clickhouse-1 sh -c "test ! -e '$CHPATH'"
-for c in nginx litellm langfuse-web langfuse-worker; do
+for c in nginx litellm langfuse-web langfuse-worker minio; do
   test "$(docker inspect -f '{{.State.Running}}' "llm-a100-$c-1")" = true
 done
 mkdir -p "$ROOT/stage"
@@ -19,7 +20,7 @@ restore_services() {
   local failed=0
   if [ "$STARTED" = 1 ]; then
     echo 'RESTORING_SERVICES'
-    for c in langfuse-web langfuse-worker litellm nginx; do
+    for c in minio langfuse-web langfuse-worker litellm nginx; do
       docker start "llm-a100-$c-1" >/dev/null || failed=1
     done
     if [ "$failed" -eq 0 ]; then STARTED=0; fi
@@ -60,6 +61,7 @@ wait_queue
 docker stop -t 45 llm-a100-langfuse-web-1 >/dev/null
 wait_queue
 docker stop -t 45 llm-a100-langfuse-worker-1 >/dev/null
+docker stop -t 45 llm-a100-minio-1 >/dev/null
 echo 'CREATING_SNAPSHOTS'
 docker exec llm-a100-postgres-1 sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -d langfuse --format=custom' > "$ROOT/stage/postgres-langfuse.dump"
 docker exec llm-a100-postgres-1 sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dumpall -U "$POSTGRES_USER" --globals-only' > "$ROOT/stage/postgres-globals.sql"
@@ -86,6 +88,6 @@ gpg --batch --yes --passphrase-file "$KEY" --symmetric --cipher-algo AES256 --s2
 echo 'ENCRYPTED_HISTORY_READY'
 ls -lh "$ROOT/cloud-history-20261116.tar.gz.gpg"
 docker exec llm-a100-nginx-1 nginx -t
-for c in nginx litellm langfuse-web langfuse-worker strata; do
+for c in nginx litellm langfuse-web langfuse-worker minio strata; do
  docker inspect "llm-a100-$c-1" --format '{{.Name}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'
 done
