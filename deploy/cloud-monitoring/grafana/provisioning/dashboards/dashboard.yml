@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: llm-monitoring
+    folder: LLM 网关
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

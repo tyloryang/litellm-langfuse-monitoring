@@ -1,0 +1,64 @@
+services:
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-docker.m.daocloud.io/prom/prometheus:v2.45.1}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../prometheus/recording-rules.yml:/etc/prometheus/rules/recording-rules.yml:ro
+      - ../../prometheus/alerts.yml:/etc/prometheus/rules/alerts.yml:ro
+      - ./secrets/litellm_metrics_token:/etc/prometheus/secrets/litellm_metrics_token:ro
+      - ./secrets/strata_api_key:/etc/prometheus/secrets/strata_api_key:ro
+      - prometheus_data:/prometheus
+    networks: [backend]
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/grafana/grafana:10.1.5}
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:?Set GRAFANA_ROOT_URL}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks: [backend]
+
+  strata-extra:
+    image: ${LITELLM_IMAGE:?Set LITELLM_IMAGE to the existing LiteLLM image}
+    restart: unless-stopped
+    entrypoint: ["python", "-u", "/monitor/strata_extra.py"]
+    command: []
+    environment:
+      STRATA_METRICS_URL: http://strata:8080/metrics
+      STRATA_API_KEY: ${STRATA_API_KEY:?Set STRATA_API_KEY}
+      STRATA_EXPORTER_HOST: 0.0.0.0
+      STRATA_EXPORTER_PORT: "9402"
+    volumes:
+      - ../../exporters/strata_extra.py:/monitor/strata_extra.py:ro
+    networks: [backend]
+
+  grafana-proxy:
+    image: ${NGINX_IMAGE:?Set NGINX_IMAGE to the existing Nginx image}
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_HOST_PORT:-8802}:8802"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${NGINX_CERTS_DIR:?Set NGINX_CERTS_DIR}:/etc/nginx/certs:ro
+    depends_on: [grafana]
+    networks: [backend]
+
+networks:
+  backend:
+    external: true
+    name: ${CLOUD_BACKEND_NETWORK:-llm-a100_backend}
+
+volumes:
+  prometheus_data:
+  grafana_data:
