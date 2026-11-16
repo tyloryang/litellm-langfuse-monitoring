@@ -4,7 +4,7 @@
 
 项目中的回调、来源 IP 账本、Strata 补充导出器和看板是针对原有组件的适配；Langfuse 本身仍负责 Trace、Session、User 和 Metadata 等能力。业务 Agent 的真实工具执行节点需要客户端在执行位置埋点，模型返回 `tool_calls` 本身不代表工具已运行。
 
-> 快速入口：[离线操作指南](docs/kylin-v10-offline-operations-step-by-step.md) · [完整离线手册](docs/kylin-v10-full-offline-deployment-20261116.md) · [下载离线包](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-reuse-amd64-20261116) · [Grafana 公式](docs/grafana-formulas.md) · [Strata 源码与配置](deploy/strata/README.md)
+> 运维从这里开始：[离线部署 README：包目录、配置和启动](docs/offline-deployment-README.md) · [逐步操作命令](docs/kylin-v10-offline-operations-step-by-step.md) · [下载离线包](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-reuse-amd64-20261116) · [完整离线手册](docs/kylin-v10-full-offline-deployment-20261116.md) · [Grafana 公式](docs/grafana-formulas.md)
 
 ## 项目背景
 
@@ -93,14 +93,14 @@ flowchart LR
     G --> H
 ```
 
-1. 从 [离线 Release](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-reuse-amd64-20261116) 下载五个分卷和校验文件；另下载新版手册更新包和操作指南。
+1. 从 [离线 Release](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-reuse-amd64-20261116) 下载五个分卷和校验文件；另下载 `offline-full-chain-update-20261116.tar.gz` 及其校验文件。
 2. 在准备机依次校验、合并；把完整 tar、校验文件及手册带入内网，在目标机再次校验并解压。
 3. 确认现有 Strata 的模型 ID、地址、密钥及容器网络可达性，再按现场选择“仅重部署现有服务”或“新建独立主栈”。
-4. 运行真实非流式和流式请求，在 Langfuse 查找同一请求，并按范围检查 Prometheus / Grafana 和数据恢复。
+4. 运行真实非流式和流式请求，再按指南第 8.1 节执行工具链验收，检查 Langfuse 中 Agent、两个 Generation、实际 Tool 和 Token；按范围检查 Prometheus / Grafana 和数据恢复。
 
-以上每一步的文件名、目录、命令、账号位置、检查点和故障处理见 **[麒麟 V10 离线操作指南](docs/kylin-v10-offline-operations-step-by-step.md)**。完整的模型来源、系统依赖、客户端接入、Strata JSON、`memlock`、大页及回滚见 [麒麟 V10 全链路离线部署手册](docs/kylin-v10-full-offline-deployment-20261116.md)。
+先看 **[离线部署 README](docs/offline-deployment-README.md)** 的解压目录、物料清单和目标机需修改项，再按 **[麒麟 V10 离线操作指南](docs/kylin-v10-offline-operations-step-by-step.md)** 逐条执行。完整的模型来源、系统依赖、客户端接入、Strata JSON、`memlock`、大页及回滚见 [麒麟 V10 全链路离线部署手册](docs/kylin-v10-full-offline-deployment-20261116.md)。
 
-离线包是发布时的快照：新版主手册以 Release 的 `strata-offline-manual-update-20261116.tar.gz` 单独交付，操作指南也提供独立附件；两者不会覆盖原始大包或更改其校验和。CentOS 7 / NVIDIA RPM 仅为候选，**麒麟 V10 特定 SP / Build 的依赖闭包和目标机断网冷安装尚未验收**。
+离线包是发布时的快照：新版入口、手册和工具链脚本以 Release 的 `offline-full-chain-update-20261116.tar.gz` 独立交付，不覆盖原始大包或更改其校验和；旧手册包和旧的独立指南附件不会自动更新。CentOS 7 / NVIDIA RPM 仅为候选，**麒麟 V10 特定 SP / Build 的依赖闭包和目标机断网冷安装尚未验收**。Nginx 和 Strata 未在本交付中承诺独立内部 span，须结合日志定位各跳。
 
 ## 仓库目录
 

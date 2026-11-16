@@ -13,8 +13,7 @@
 | `kylin-v10-gateway-reuse-amd64-20261116.tar.part01` 至 `part05` | 完整离线包的 5 个分卷，必须全部下载 |
 | `BUNDLE-PARTS-SHA256SUMS` | 检查 5 个分卷 |
 | `kylin-v10-gateway-reuse-amd64-20261116.tar.sha256` | 检查合并后的完整包 |
-| `strata-offline-manual-update-20261116.tar.gz` 和同名 `.sha256` | 较新的完整主手册与附录 A，作为独立手册包使用 |
-| 本文件及其 `.sha256` | 当前逐步操作指南；与主手册一起携带 |
+| `offline-full-chain-update-20261116.tar.gz` 和同名 `.sha256` | 新版部署 README、操作指南、完整主手册和真实工具链验收脚本 |
 
 如果已有校验通过的完整 `kylin-v10-gateway-reuse-amd64-20261116.tar`，可跳过分卷下载和合并。完整包约 2.11 GB，展开后包含：
 
@@ -48,11 +47,10 @@ gh release download offline-reuse-amd64-20261116 \
   -p 'kylin-v10-gateway-reuse-amd64-20261116.tar.part*' \
   -p 'BUNDLE-PARTS-SHA256SUMS' \
   -p 'kylin-v10-gateway-reuse-amd64-20261116.tar.sha256' \
-  -p 'strata-offline-manual-update-20261116.tar.gz*' \
-  -p 'kylin-v10-offline-operations-step-by-step.md*'
+  -p 'offline-full-chain-update-20261116.tar.gz*'
 cd /srv/llm-offline-download
 sha256sum -c BUNDLE-PARTS-SHA256SUMS
-sha256sum -c strata-offline-manual-update-20261116.tar.gz.sha256
+sha256sum -c offline-full-chain-update-20261116.tar.gz.sha256
 test ! -e kylin-v10-gateway-reuse-amd64-20261116.tar
 cat kylin-v10-gateway-reuse-amd64-20261116.tar.part01 \
     kylin-v10-gateway-reuse-amd64-20261116.tar.part02 \
@@ -68,13 +66,11 @@ sha256sum -c kylin-v10-gateway-reuse-amd64-20261116.tar.sha256
 ```text
 kylin-v10-gateway-reuse-amd64-20261116.tar
 kylin-v10-gateway-reuse-amd64-20261116.tar.sha256
-strata-offline-manual-update-20261116.tar.gz
-strata-offline-manual-update-20261116.tar.gz.sha256
-kylin-v10-offline-operations-step-by-step.md
-kylin-v10-offline-operations-step-by-step.md.sha256
+offline-full-chain-update-20261116.tar.gz
+offline-full-chain-update-20261116.tar.gz.sha256
 ```
 
-其中本指南以 Release 附件单独提供，执行 `sha256sum -c kylin-v10-offline-operations-step-by-step.md.sha256` 核验。校验清单本身须通过可信渠道确认；准备介质及目标磁盘需容纳完整包、展开文件、约 5.71 GB 的恢复 tar、镜像层、数据库和备份。建议至少预留 30 GiB 再加业务数据及备份空间，实际以镜像层与历史数据大小为准。
+新版操作指南位于补充包内；旧版同名 Release 附件及旧手册包是历史快照，不包含本版工具链验收脚本。校验清单本身须通过可信渠道确认；准备介质及目标磁盘需容纳完整包、展开文件、约 5.71 GB 的恢复 tar、镜像层、数据库和备份。建议至少预留 30 GiB 再加业务数据及备份空间，实际以镜像层与历史数据大小为准。
 
 ## 3. 离线目标机：先检查，不安装 RPM
 
@@ -125,25 +121,24 @@ unset STRATA_CHECK_URL
 
 ## 4. 离线目标机：校验并解压
 
-将第 2 节 6 个文件复制到一个目录，以下使用占位路径，先改成实际挂载路径；不要覆盖已有 `/opt/llm-handoff` 或 `/opt/llm-manual-update-20261116`：
+将第 2 节 4 个文件复制到一个目录，以下使用占位路径，先改成实际挂载路径；不要覆盖已有 `/opt/llm-handoff` 或 `/opt/llm-offline-full-chain-update-20261116`：
 
 ```bash
 set -euo pipefail
 cd /实际/离线介质目录
 sha256sum -c kylin-v10-gateway-reuse-amd64-20261116.tar.sha256
-sha256sum -c strata-offline-manual-update-20261116.tar.gz.sha256
-sha256sum -c kylin-v10-offline-operations-step-by-step.md.sha256
+sha256sum -c offline-full-chain-update-20261116.tar.gz.sha256
 test ! -e /opt/llm-handoff
-test ! -e /opt/llm-manual-update-20261116
+test ! -e /opt/llm-offline-full-chain-update-20261116
 tar -xf kylin-v10-gateway-reuse-amd64-20261116.tar -C /opt
-tar -xzf strata-offline-manual-update-20261116.tar.gz -C /opt
+tar -xzf offline-full-chain-update-20261116.tar.gz -C /opt
 cd /opt/llm-handoff
 sha256sum -c HANDOFF-SHA256SUMS
-cd /opt/llm-manual-update-20261116
+cd /opt/llm-offline-full-chain-update-20261116
 sha256sum -c MANUAL-UPDATE-SHA256SUMS
 ```
 
-此时没有安装镜像或启动容器。新版完整手册是 `/opt/llm-manual-update-20261116/manual/docs/kylin-v10-full-offline-deployment-20261116.md`；查看 Strata JSON、Compose 与大页时读其中附录 A。原包的手册文件和校验清单不要用新版直接覆盖。
+此时没有安装镜像或启动容器。先阅读 `/opt/llm-offline-full-chain-update-20261116/README.md`，新版完整手册位于其 `manual/docs/kylin-v10-full-offline-deployment-20261116.md`；查看 Strata JSON、Compose 与大页时读其中附录 A。原包的手册文件和校验清单不要用新版直接覆盖。
 
 接下来只恢复**网关候选包的 tar**，不展开监控包：
 
@@ -426,21 +421,22 @@ df -h / /opt
 
 新安装的默认入口为 `https://目标域名:8443/v1`（LiteLLM API）、`https://目标域名:8443/ui`（LiteLLM UI，实际可用性以该版本页面为准）、`https://目标域名:8444/`（Langfuse）。正式环境使用可信 CA 和匹配 SAN 的证书；客户端实际端口和外部映射按现场填写，不能假设云端端口映射存在。既有实例使用原账号和密钥，新实例的初始化信息在受控 `.env` 中；不要把真实密码粘贴到终端记录或截图。
 
-以下在受信客户端执行两次真实请求；测试会产生新的 usage 和 Langfuse 事件。先输入符合目标证书 SAN 的域名与 CA 文件路径，密钥从终端不回显读取：
+以下在受信客户端执行两次真实请求；测试会产生新的 usage 和 Langfuse 事件。HTTPS 输入符合证书 SAN 的域名；若 CA 已由系统信任或现场使用 HTTP，CA 路径留空。密钥从终端不回显读取，模型别名填写现场配置：
 
 ```bash
 read -r -p '网关 URL，例如 https://llm.example.internal:8443：' GATEWAY_URL
-read -r -p '可信 CA 文件绝对路径：' GATEWAY_CA
-export GATEWAY_URL GATEWAY_CA
+read -r -p '可信 CA 文件绝对路径（可留空）：' GATEWAY_CA
+read -r -p '网关模型别名，例如 qwen-strata：' GATEWAY_MODEL
+export GATEWAY_URL GATEWAY_CA GATEWAY_MODEL
 python3 - <<'PY'
 import getpass, json, os, secrets, ssl, sys, urllib.request
 key = getpass.getpass('LiteLLM master or authorized virtual key: ')
-ctx = ssl.create_default_context(cafile=os.environ['GATEWAY_CA'])
+ctx = ssl.create_default_context(cafile=os.environ['GATEWAY_CA'] or None)
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=ctx))
 url = os.environ['GATEWAY_URL'].rstrip('/') + '/v1/chat/completions'
 for stream in (False, True):
     trace = secrets.token_hex(16)
-    data = {'model':'qwen-strata','messages':[{'role':'user','content':'What is 17 plus 25? Answer with the number.'}], 'max_tokens':128, 'stream':stream}
+    data = {'model':os.environ['GATEWAY_MODEL'],'messages':[{'role':'user','content':'What is 17 plus 25? Answer with the number.'}], 'max_tokens':128, 'stream':stream}
     if stream:
         data['stream_options'] = {'include_usage': True}
     req = urllib.request.Request(url, data=json.dumps(data).encode(), method='POST', headers={
@@ -466,10 +462,53 @@ for stream in (False, True):
         if r.status != 200 or '42' not in text or not usage or not done or (stream and frames < 2):
             sys.exit('Inference acceptance failed')
 PY
-unset GATEWAY_URL GATEWAY_CA
+unset GATEWAY_URL GATEWAY_CA GATEWAY_MODEL
 ```
 
 在 Langfuse 的 **Tracing** 按请求时间、模型、输入输出、usage 及实际 Trace ID 查找这两次测试。若客户端或代理没有透传 `traceparent`，客户端打印 ID 不一定是 Langfuse 的 ID；应综合时间和内容关联。流式 TTFT、TPOT、工具节点、来源 IP 和 Grafana 展示还须按主手册和实际功能逐项验证，健康页和 HTTP 200 不能替代这些检查。
+
+### 8.1 验证真实 Agent → Generation → Tool → Generation
+
+普通请求只能证明 Generation 可上报；工具节点需要客户端真实执行工具并埋点。下面通过 Nginx 发起两次模型调用，模型提出 `add_numbers` 后由脚本实际计算 `17 + 25`，然后将工具结果发回模型；脚本通过 Langfuse API 检查同一 Trace 中的 Agent、两个不同的 Generation、Tool 和父子关系，以及模型、输入输出、Token 和时间。测试产生真实调用和新的追踪数据。
+
+先将容器名改为现场 LiteLLM 容器名；检查它具有 SDK 和访问 Langfuse 所需环境变量。下列检查只输出是否存在，不输出值。其他自定义镜像必须事先离线准备兼容 SDK，不能临时联网安装。
+
+```bash
+LITELLM_CONTAINER=llm-a100-litellm-1  # 改为现场实际容器名
+export LITELLM_CONTAINER
+docker exec -i "$LITELLM_CONTAINER" python - <<'PY'
+import importlib.metadata as m, os
+names = ('LITELLM_MASTER_KEY', 'LANGFUSE_HOST', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY')
+print({n: bool(os.environ.get(n)) for n in names})
+print('Langfuse SDK:', m.version('langfuse'))
+if not all(os.environ.get(n) for n in names):
+    raise SystemExit('Missing required settings')
+PY
+```
+
+`GATEWAY_URL` 必须从 LiteLLM 容器可访问，填写 Nginx 的 scheme、域名或 IP 和端口，不带 `/v1`；`GATEWAY_MODEL` 替换为实际网关模型别名。HTTPS 使用证书 SAN 匹配的地址，CA 文件为宿主机上的可信 CA 文件；若系统 CA 已受容器信任，或现场明确使用 HTTP，可留空。Langfuse 若使用 HTTPS，其 CA 也须由容器信任，必要时在容器内预先配置 `SSL_CERT_FILE`。
+
+```bash
+set -euo pipefail
+TRACE_SCRIPT=/opt/llm-offline-full-chain-update-20261116/manual/examples/offline_tool_trace_check.py
+test -f "$TRACE_SCRIPT"
+read -r -p '容器可访问的 Nginx URL（不含 /v1）：' GATEWAY_URL
+read -r -p '网关 CA 文件路径；系统已信任或 HTTP 留空：' GATEWAY_CA_PATH
+read -r -p '网关模型别名，例如 qwen-strata：' GATEWAY_MODEL
+GATEWAY_CA_PEM=''
+if [ -n "$GATEWAY_CA_PATH" ]; then
+  test -r "$GATEWAY_CA_PATH"
+  GATEWAY_CA_PEM=$(cat "$GATEWAY_CA_PATH")
+fi
+export GATEWAY_URL GATEWAY_MODEL GATEWAY_CA_PEM
+docker exec -i -e GATEWAY_URL -e GATEWAY_MODEL -e GATEWAY_CA_PEM \
+  "$LITELLM_CONTAINER" python - < "$TRACE_SCRIPT"
+unset GATEWAY_URL GATEWAY_MODEL GATEWAY_CA_PEM GATEWAY_CA_PATH
+```
+
+脚本最多等待 180 秒让异步事件入库；通过时记下 `trace_id`，在 Langfuse Tracing 搜索并展开树。验收应看到 1 个 AGENT、2 个不同的 GENERATION 和 1 个 TOOL，节点包含实际输入、输出、模型和 usage。SDK 验证节点使用 `offline-validation` 环境，网关 Generation 可能为 `production`；查询时选择全部环境。若查不到，确认容器内 `LANGFUSE_HOST` 可访问、项目 key 指向同一项目、回调已启用，查看 worker 和网关日志；不输出凭据。
+
+这是逻辑调用链，不代表 Nginx 或 Strata 已自动产生独立内部 span。排查各服务时结合 Nginx 和 Strata 日志、请求时间或实际可关联的请求 ID；不能凭示意图判定每跳都已埋点。客户端自己的工具也需要在真实执行位置埋点并传播 Trace 上下文。
 
 ## 9. 失败时怎么处理
 

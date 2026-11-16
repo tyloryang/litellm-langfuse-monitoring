@@ -1,5 +1,7 @@
 # 麒麟 V10 离线部署主手册：Nginx、LiteLLM、Strata、Langfuse 与 Grafana
 
+现场操作入口请先阅读 [离线部署 README](offline-deployment-README.md) 和 [逐步操作指南](kylin-v10-offline-operations-step-by-step.md)。原始大包是固定快照，新版指南和工具链验收脚本以独立 `offline-full-chain-update-20261116.tar.gz` 随包提供；本文第 3 节的历史准备过程不能代替新版指南的实际交付清单。
+
 编写日期：2026-11-16。本文以本仓库、已发布离线候选物料和云端现场记录为基础，提供从联网准备到内网验收的操作路径。**麒麟 V10 具体 SP / Build 的依赖闭包、干净机器断网安装、GPU 驱动、冷启动及恢复尚未实测；本手册不是目标机已验收报告。** 命令中显式指出的示例地址和路径须按现场替换，缺少物料或前置条件时停在对应步骤。
 
 本次按用户要求复用目标机的容器环境、Strata 和模型。取得综合离线包后，先阅读[复用已有 Strata 的离线包使用入口](kylin-v10-reuse-offline-bundle-20261116.md)，依次校验、解包和恢复主包，再返回本文第 5.2 节。宿主工具检查与 CentOS / NVIDIA 候选 RPM 的来源及限制见[麒麟 V10 宿主工具准备](kylin-v10-package-preparation.md)；候选包不是已验证的麒麟 RPM 依赖闭包。云端 JSON 参数及日志抽样结果见[配置核对记录](cloud-strata-json-log-audit-20261116.md)。

@@ -134,7 +134,9 @@ def main():
         'MONITORING-SHA256SUMS': ROOT / 'offline-bundle/MONITORING-SHA256SUMS',
     }
     files = [('downloads/' + name, path) for name, path in downloads.items()]
+    files.append(('README.md', ROOT / 'docs/offline-deployment-README.md'))
     docs = [
+        'offline-deployment-README.md',
         'kylin-v10-reuse-offline-bundle-20261116.md',
         'kylin-v10-full-offline-deployment-20261116.md',
         'kylin-v10-offline-operations-step-by-step.md',
@@ -156,6 +158,7 @@ def main():
                 'deploy/cloud-monitoring/strata-proxy.conf', 'ops/adapt_monitoring_existing_strata.py',
                 'deploy/strata/docker-compose.example.yml',
                 'examples/strata-iq3_xxs-cloud-4slot.example.json',
+                'examples/offline_tool_trace_check.py',
                 'ops/kylin-target-inventory.sh', 'ops/kylin-download-rpms.sh',
                 'ops/kylin-rpm-offline-check.sh', 'ops/kylin-verify-nvidia-metadata.py'):
         files.append(('manual/' + rel, ROOT / rel))

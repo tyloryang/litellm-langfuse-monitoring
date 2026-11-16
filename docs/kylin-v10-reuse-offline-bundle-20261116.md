@@ -14,7 +14,7 @@
 
 主手册附录 A 包含修复后的完整 Strata 启动 JSON、Docker Compose 中 GPU 与 memlock 的配置、麒麟主机大页的查看 / 设置 / 验证 / 回滚，以及云端锁页后内存余量与验收边界。离线归档是打包时的固定快照；旧版归档不会因仓库文档更新而自动更新，转运前须核对归档内手册是否包含附录 A，缺少时应另行携带最新版主手册及其依赖文件或重新制作并校验归档。
 
-需要从下载文件开始逐条执行时，请阅读 [麒麟 V10 离线操作指南](kylin-v10-offline-operations-step-by-step.md)。该指南作为 Release 独立附件提供；原有归档不会自动新增该文件。
+新版交付从 [离线部署 README](offline-deployment-README.md) 开始，再按 [麒麟 V10 离线操作指南](kylin-v10-offline-operations-step-by-step.md) 执行。Release 的 `offline-full-chain-update-20261116.tar.gz` 含这两份文档及真实工具链验证脚本；原归档和旧版手册更新包均不会自动新增脚本，原始校验值保持不变。
 
 ## 2. 在目标机解包
 
