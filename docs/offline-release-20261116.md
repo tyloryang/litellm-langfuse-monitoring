@@ -1,6 +1,6 @@
 # 2026-11-16 离线候选包：下载、适配与验收
 
-本候选包适用于准备 **linux/amd64 的 Nginx、LiteLLM、Langfuse 及其存储依赖**。先准备并核验镜像、Docker / Compose 和目标机依赖，再进行断网部署。它没有包含 Strata 镜像、模型权重、Prometheus、Grafana、现场数据或密码；麒麟 V10 的完整 RPM 依赖闭包和干净机器断网冷安装还没有完成。
+本候选包适用于准备 **linux/amd64 的 Nginx、LiteLLM、Langfuse 及其存储依赖**。先准备并核验镜像、Docker / Compose 和目标机依赖，再进行断网部署。原四卷没有包含 Strata 镜像、模型权重、Prometheus、Grafana、现场数据或密码；Prometheus 和 Grafana 现已作为独立扩展附件提供，见 [离线监控扩展包说明](offline-monitoring-addon-20261116.md)。麒麟 V10 的完整 RPM 依赖闭包和干净机器断网冷安装还没有完成。
 
 从 [GitHub Release](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-candidate-amd64-20261116) 下载下列全部文件到同一目录。四个压缩包分卷按编号顺序合并；`SHA256SUMS` 和 `manifest.json` 用于核验。
 
@@ -12,6 +12,7 @@
 | `source-and-docs.tar.gz` | 原发布时的仓库源码和迁移手册；不同于主包内的较早源码快照 |
 | `source-and-docs-20261116-validated.tar.gz` | 真实推理及工具链验收后的源码和手册快照，Git 提交 `12f70a0`；实际云端补充说明以本附件或仓库更新版本为准 |
 | `VALIDATED-SHA256SUMS` | 更新版源码手册附件的独立 SHA-256，不改变原四分卷及其校验文件 |
+| `monitoring-amd64-20261116.tar`、`MONITORING-SHA256SUMS` | 单独下载的监控扩展包与外层校验文件；包含 Prometheus 2.45.1、Grafana 10.1.5 和仓库看板、规则及代理配置，不修改原四卷 |
 
 在具备 `sha256sum` 的 Linux 准备机上恢复并核验：
 

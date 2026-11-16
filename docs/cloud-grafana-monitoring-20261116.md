@@ -61,4 +61,4 @@ COMPOSE=/opt/llm-observability-deploy/downloads/docker-compose-linux-x86_64
 3. 将看板 105 条 PromQL 的变量替换为全选后直接查询 Prometheus，105 条执行成功，其中 90 条有样本。没有样本的内容包括自动路由、vLLM / SGLang 独有指标，以及 Strata 当前未提供的部分最近请求和槽位字段。此检查不等同于逐面板浏览器视觉验收。
 4. 通过 Nginx → LiteLLM → Strata 重新发送非流式和流式请求，均返回 HTTP 200 和答案 `42`；对应两条新 Generation 均在 Langfuse 中查到。
 
-本次监控扩展、Prometheus / Grafana 镜像**尚未加入**已发布的四卷离线候选包。离线候选包范围见 [离线候选发布说明](offline-release-20261116.md)。麒麟 V10 干净目标机断网安装及验收仍待完成；本云端部署结果不能替代该验收。
+本次监控扩展和 Prometheus / Grafana 镜像作为独立附件发布，使用方法见 [离线监控扩展包](offline-monitoring-addon-20261116.md)；原有四卷候选包未改动。麒麟 V10 干净目标机断网安装及验收仍待完成；本云端部署结果不能替代该验收。
