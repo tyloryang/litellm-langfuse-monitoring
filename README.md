@@ -4,6 +4,8 @@
 
 项目面向内网和离线环境。Windows 11 + Ubuntu 24.04 WSL 的既有环境已经完成真实推理、Trace、工具调用和看板验证。[linux/amd64 配置与镜像包](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-amd64-20261109)已经发布，包含 11 个渡渡鸟镜像、Compose 和监控配置。麒麟 V10 的系统 RPM、Python wheel、模型权重和断网冷安装仍未验收，不能把这个 Release 当作完整离线环境。
 
+[2026-11-16 离线候选包](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-candidate-amd64-20261116) 面向 Nginx、LiteLLM、Langfuse 及其存储依赖，包含 9 个服务镜像、Compose 和 CentOS 7 Docker RPM 候选；包文件以分卷发布。[下载、自动路由、Grafana 和麒麟 V10 验收说明](docs/offline-release-20261116.md)列出全部下载文件、合并校验方式、依赖缺口和已验证范围。此包已在 CentOS 7 同机隔离网络通过 mock 请求与 Langfuse 事件入库检查；麒麟 V10 依赖闭包、断网冷装和真实模型路由仍待验收。
+
 ## 1. 项目背景
 
 原环境已经运行 LiteLLM、Langfuse、Prometheus、Grafana 和 Strata 推理服务，但这些组件的原生能力没有形成一条完整的观测链路：

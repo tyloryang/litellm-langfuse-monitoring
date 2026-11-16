@@ -82,6 +82,8 @@ services:
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: langfuse
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      # The bundled ClickHouse is a single node without ZooKeeper.
+      CLICKHOUSE_CLUSTER_ENABLED: ${CLICKHOUSE_CLUSTER_ENABLED:-false}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_AUTH: ${REDIS_AUTH}
