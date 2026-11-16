@@ -1,0 +1,32 @@
+# Standalone example for a previously prepared /data tree and model shards.
+# Attach LiteLLM to the same Docker network when integrating with the gateway.
+services:
+  strata:
+    image: local/strata:0.1.45-cuda12
+    restart: unless-stopped
+    environment:
+      FAMILY: qwen
+      MODEL: IQ3_XXS
+      CONTEXT: "262144"
+      VISION: "no"
+      LOW_RAM: "off"
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      STRATA_CUDA: "12"
+      GGUF_DIR: /models
+      API_KEY: ${STRATA_API_KEY:?Set STRATA_API_KEY in a private environment file}
+      STRATA_API_KEY: ${STRATA_API_KEY:?Set STRATA_API_KEY in a private environment file}
+    volumes:
+      - ${STRATA_DATA_DIR:?Set STRATA_DATA_DIR}:/data
+      - ${STRATA_MODEL_DIR:?Set STRATA_MODEL_DIR}:/models:ro
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

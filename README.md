@@ -14,6 +14,8 @@
 
 云端 Strata 的 JSON 参数、日志抽样和 batch / pipeline 冲突检查见[2026-11-16 配置核对记录](docs/cloud-strata-json-log-audit-20261116.md)。
 
+仓库还包含与云端核对过的 [Strata v0.1.45 源码快照](source/strata/)，以及 [CUDA 12 构建、四槽配置与 Compose 示例](deploy/strata/README.md)。模型权重、pack 和真实密钥需在目标环境另行准备；本次云端锁页后内存余量和推理验证见[部署记录](docs/cloud-strata-memlock-deployment-20261116.md)。
+
 ## 1. 项目背景
 
 原环境已经运行 LiteLLM、Langfuse、Prometheus、Grafana 和 Strata 推理服务，但这些组件的原生能力没有形成一条完整的观测链路：

@@ -2,3 +2,40 @@
 *.sh text eol=lf
 *.py text eol=lf
 *.tsv text eol=lf
+
+# Preserve upstream Strata snapshot files that intentionally contain CRLF.
+source/strata/bench/results/2026-10-07-community-arc-b65-v01402/results.csv -text
+source/strata/bench/results/2026-10-08-community-rtx4070-iq2-xs/README.md -text
+source/strata/bench/results/2026-10-08-community-rtx4070-iq2-xs/transcribed-runs.csv -text
+source/strata/bench/results/2026-10-08-community-v100-sm70-table/ab-engine.jsonl -text
+source/strata/bench/results/2026-10-09-community-gfx1151-ud-iq4xs-0.1.41/analysis/quality-tasks.csv -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/data/cache-opencode.json -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/data/coding-per-run.json -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/data/prefill-16384.json -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/data/prefill-2048.json -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/data/prefill-4096.json -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/data/prefill-8192.json -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/data/resource-summary.json -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/data/selected-120k-smoke.json -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/data/selected-medium-smoke.json -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/merge-windows/AGENTS.md -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/merge-windows/README.md -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/merge-windows/acceptance.test.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/merge-windows/windows.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/refactor-orders/AGENTS.md -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/refactor-orders/README.md -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/refactor-orders/acceptance.test.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/refactor-orders/orders.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/reservation-workflow/AGENTS.md -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/reservation-workflow/README.md -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/reservation-workflow/acceptance.test.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/reservation-workflow/allocate.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/reservation-workflow/requests.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/fixtures/reservation-workflow/stock.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/solutions/iq2-reservation-workflow-3/allocate.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/solutions/iq2-reservation-workflow-3/requests.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/solutions/iq2-reservation-workflow-3/stock.ts -text
+source/strata/bench/results/2026-10-10-community-rx-9060-xt/solutions/iq3-refactor-orders-3/orders.ts -text
+source/strata/bench/results/2026-10-12-community-gfx1103/runs.csv -text
+source/strata/data/gguf_fingerprints.json -text
+source/strata/tools/check_isa_guard.py -text
