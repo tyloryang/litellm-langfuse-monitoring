@@ -53,9 +53,9 @@ FORMULAS = {
         "`VRAM% = 100 × memory_used_bytes / memory_total_bytes`。",
         "分子分母按相同 deployment / gpu 匹配，每张卡单算；包含驻留模型和其他显存分配，不等价于 KV 使用率。分母缺失或为 0 时没有有效百分比。",
     ),
-    "最近 TTFT · 引擎": (
-        "`TTFT_last_engine = t_first_raw_engine_token − t_enter_engine_queue`，即 `requests[0].first_engine_token_s`。",
-        "单位秒，包含队列与 Prefill；Strata 记录到毫秒精度。此字段与引擎 histogram 的 st.first_token 使用不同标记，也与网关首个可输出增量不同。",
+    "TTFT · 引擎近5分钟 P50": (
+        "`TTFT_P50_5m = histogram_quantile(0.50, Σ_by_le rate(engine_ttft_bucket[5m]))`；仅当近 5 分钟有新样本时展示。",
+        "单位秒；使用引擎服务 histogram 的首输出时间，按桶估计中位数。它不是最近单个请求的原始首 Token 时间；部分 Strata 版本没有 first_engine_token_s，不能伪造该字段。",
     ),
     "最近 TPOT · 引擎均值": (
         "`TPOT_last_engine = (decode_ms / 1000) / (output_tokens − 1)`，要求 `output_tokens > 1` 且有 decode_ms。",

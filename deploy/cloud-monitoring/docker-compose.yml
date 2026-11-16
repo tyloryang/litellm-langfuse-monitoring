@@ -54,6 +54,16 @@ services:
     depends_on: [grafana]
     networks: [backend]
 
+  strata-proxy:
+    image: ${NGINX_IMAGE:?Set NGINX_IMAGE to the existing Nginx image}
+    restart: unless-stopped
+    ports:
+      - "${STRATA_HOST_PORT:-8803}:8803"
+    volumes:
+      - ./strata-proxy.conf:/etc/nginx/nginx.conf:ro
+      - ${NGINX_CERTS_DIR:?Set NGINX_CERTS_DIR}:/etc/nginx/certs:ro
+    networks: [backend]
+
 networks:
   backend:
     external: true

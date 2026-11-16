@@ -132,19 +132,19 @@ llm:gpu_utilization_percent{deployment=~"$deployment",gpu=~"$gpu"}
 100 * llm:gpu_memory_used_bytes{deployment=~"$deployment",gpu=~"$gpu"} / llm:gpu_memory_total_bytes{deployment=~"$deployment",gpu=~"$gpu"}
 ```
 
-### 最近 TTFT · 引擎
+### TTFT · 引擎近5分钟 P50
 
 面板 ID：`6`；类型：`stat`。
 
 **计算公式**
 
-`TTFT_last_engine = t_first_raw_engine_token − t_enter_engine_queue`，即 `requests[0].first_engine_token_s`。
+`TTFT_P50_5m = histogram_quantile(0.50, Σ_by_le rate(engine_ttft_bucket[5m]))`；仅当近 5 分钟有新样本时展示。
 
 **统计口径与边界**
 
-单位秒，包含队列与 Prefill；Strata 记录到毫秒精度。此字段与引擎 histogram 的 st.first_token 使用不同标记，也与网关首个可输出增量不同。
+单位秒；使用引擎服务 histogram 的首输出时间，按桶估计中位数。它不是最近单个请求的原始首 Token 时间；部分 Strata 版本没有 first_engine_token_s，不能伪造该字段。
 
-引擎队列到原始首 Token；区别于服务 histogram 和网关迭代器的首输出标记。
+近 5 分钟引擎 histogram 的 P50；没有新样本时显示暂无样本，不表示最近一次请求的精确 TTFT。
 
 **单位**：秒；Grafana 可自动显示为毫秒等子单位。
 
@@ -152,7 +152,7 @@ llm:gpu_utilization_percent{deployment=~"$deployment",gpu=~"$gpu"}
 
 查询 A：
 ```promql
-strata_extra_last_request_ttft_seconds{model=~"$engine_model"}
+histogram_quantile(0.5, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~"$engine_model"}[5m]))) and on() (sum(increase(llm:engine_ttft_seconds_bucket{model=~"$engine_model",le="+Inf"}[5m])) > 0)
 ```
 
 ### 最近 TPOT · 引擎均值
@@ -274,7 +274,7 @@ llm:engine_requests_waiting{model=~"$engine_model"}
 
 t0 为网关 pre-call hook 的单调时钟；有效增量包括正文、推理或工具名 / 参数，排除 role、空帧及 usage。仅流式有样本；已产生首输出后失败的请求仍可有 TTFT。时间戳在网关迭代器取样，不是客户端实际收包时间。
 
-从网关接收到第一个有效内容、推理或工具增量。仅统计流式。
+从网关接收到第一个有效内容、推理或工具增量。仅统计流式；固定 5 分钟窗口。
 
 **单位**：秒；Grafana 可自动显示为毫秒等子单位。
 
@@ -282,17 +282,17 @@ t0 为网关 pre-call hook 的单调时钟；有效增量包括正文、推理�
 
 查询 A：
 ```promql
-histogram_quantile(0.5, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.5, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~"$callback_model"}[5m])))
 ```
 
 查询 B：
 ```promql
-histogram_quantile(0.95, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.95, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~"$callback_model"}[5m])))
 ```
 
 查询 C：
 ```promql
-histogram_quantile(0.99, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.99, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~"$callback_model"}[5m])))
 ```
 
 ### TPOT · 网关请求均值 P50 / P95 / P99
@@ -315,17 +315,17 @@ histogram_quantile(0.99, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model
 
 查询 A：
 ```promql
-histogram_quantile(0.5, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.5, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~"$callback_model"}[$__rate_interval])))
 ```
 
 查询 B：
 ```promql
-histogram_quantile(0.95, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.95, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~"$callback_model"}[$__rate_interval])))
 ```
 
 查询 C：
 ```promql
-histogram_quantile(0.99, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.99, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~"$callback_model"}[$__rate_interval])))
 ```
 
 ### 首段可见答案 · P50 / P95
@@ -348,12 +348,12 @@ histogram_quantile(0.99, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model
 
 查询 A：
 ```promql
-histogram_quantile(0.5, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.5, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~"$callback_model"}[$__rate_interval])))
 ```
 
 查询 B：
 ```promql
-histogram_quantile(0.95, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.95, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~"$callback_model"}[$__rate_interval])))
 ```
 
 ### TTFT · 引擎 P50 / P95
@@ -368,18 +368,20 @@ Strata 每请求写入 `TTFT_hist = st.first_token − request.started`；对归
 
 保留引擎服务原始首输出标记，不在 Grafana 重建。该标记可能受到服务端解析 / 缓冲影响，与最近 first_engine_token_s 的原始 Token 标记不相同。vLLM / SGLang 使用其各自原生 histogram。
 
+固定 5 分钟窗口，减少低流量场景下的空窗。
+
 **单位**：秒；Grafana 可自动显示为毫秒等子单位。
 
 **实际 PromQL**
 
 查询 A：
 ```promql
-histogram_quantile(0.5, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~"$engine_model"}[$__rate_interval])))
+histogram_quantile(0.5, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~"$engine_model"}[5m])))
 ```
 
 查询 B：
 ```promql
-histogram_quantile(0.95, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~"$engine_model"}[$__rate_interval])))
+histogram_quantile(0.95, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~"$engine_model"}[5m])))
 ```
 
 ### ITL · 引擎 P50 / P95
@@ -428,17 +430,17 @@ histogram_quantile(0.95, sum by (le) (rate(llm:engine_itl_seconds_bucket{model=~
 
 查询 A：
 ```promql
-histogram_quantile(0.5, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.5, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~"$callback_model"}[$__rate_interval])))
 ```
 
 查询 B：
 ```promql
-histogram_quantile(0.95, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.95, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~"$callback_model"}[$__rate_interval])))
 ```
 
 查询 C：
 ```promql
-histogram_quantile(0.99, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~"$gateway_model"}[$__rate_interval])))
+histogram_quantile(0.99, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~"$callback_model"}[$__rate_interval])))
 ```
 
 ### LiteLLM 上游 API 延迟 P95
@@ -503,7 +505,7 @@ histogram_quantile(0.95, sum by (le) (rate(litellm_overhead_latency_metric_bucke
 
 查询 A：
 ```promql
-sum by (reason) (increase(llm_gateway_tpot_skipped_total{model=~"$gateway_model"}[$__range]))
+sum by (reason) (increase(llm_gateway_tpot_skipped_total{model=~"$callback_model"}[$__range]))
 ```
 
 ## 03 · Token、吞吐和请求质量
@@ -719,7 +721,7 @@ sum(rate(litellm_output_reasoning_tokens_metric_total{requested_model=~"$gateway
 
 查询 A：
 ```promql
-sum by (model) (rate(llm_gateway_tool_proposals_total{model=~"$gateway_model"}[$__rate_interval]))
+sum by (model) (rate(llm_gateway_tool_proposals_total{model=~"$callback_model"}[$__rate_interval]))
 ```
 
 ## 04 · Strata 缓存、上下文和 MTP
@@ -1265,7 +1267,7 @@ R = $__range。此 counter 表示回调无法完整核算的请求数，不是�
 
 查询 A：
 ```promql
-sum(increase(llm_gateway_unpriced_requests_total{model=~"$gateway_model"}[$__range]))
+sum(increase(llm_gateway_unpriced_requests_total{model=~"$callback_model"}[$__range]))
 ```
 
 ### LiteLLM 费用 · USD
@@ -1334,22 +1336,22 @@ R 为所选时间跨度，表格使用当前时点 instant 查询并按 source_i
 
 查询 A：
 ```promql
-sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input"}[$__range]))
+sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"input"}[$__range]))
 ```
 
 查询 B：
 ```promql
-sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"output"}[$__range]))
+sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"output"}[$__range]))
 ```
 
 查询 C：
 ```promql
-sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input|output"}[$__range]))
+sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"input|output"}[$__range]))
 ```
 
 查询 D：
 ```promql
-sum by (source_ip) (increase(llm_gateway_source_requests_total{model=~"$gateway_model",source_ip=~"$source_ip"}[$__range]))
+sum by (source_ip) (increase(llm_gateway_source_requests_total{model=~"$callback_model",source_ip=~"$source_ip"}[$__range]))
 ```
 
 ### 来源 IP Token 累计 · 启用以来
@@ -1370,22 +1372,22 @@ SQLite 持久化累计值从来源统计开始时间计数，重启不清零；�
 
 查询 A：
 ```promql
-sum by (source_ip) (llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input"})
+sum by (source_ip) (llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"input"})
 ```
 
 查询 B：
 ```promql
-sum by (source_ip) (llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"output"})
+sum by (source_ip) (llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"output"})
 ```
 
 查询 C：
 ```promql
-sum by (source_ip) (llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input|output"})
+sum by (source_ip) (llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"input|output"})
 ```
 
 查询 D：
 ```promql
-sum by (source_ip) (llm_gateway_source_requests_total{model=~"$gateway_model",source_ip=~"$source_ip"})
+sum by (source_ip) (llm_gateway_source_requests_total{model=~"$callback_model",source_ip=~"$source_ip"})
 ```
 
 ### 来源 IP 输入 / 输出 Token 速率
@@ -1406,12 +1408,12 @@ W=$__rate_interval，单位 Token/s，先对每条 counter 求 rate 再按来源
 
 查询 A：
 ```promql
-sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input"}[$__rate_interval]))
+sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"input"}[$__rate_interval]))
 ```
 
 查询 B：
 ```promql
-sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"output"}[$__rate_interval]))
+sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"output"}[$__rate_interval]))
 ```
 
 ### 来源 IP 缓存 / 推理 Token 速率
@@ -1432,12 +1434,12 @@ sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model"
 
 查询 A：
 ```promql
-sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"input_cached"}[$__rate_interval]))
+sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"input_cached"}[$__rate_interval]))
 ```
 
 查询 B：
 ```promql
-sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model",source_ip=~"$source_ip",token_type=~"output_reasoning"}[$__rate_interval]))
+sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$callback_model",source_ip=~"$source_ip",token_type=~"output_reasoning"}[$__rate_interval]))
 ```
 
 ### 来源 IP usage 缺失请求
@@ -1458,7 +1460,7 @@ sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~"$gateway_model"
 
 查询 A：
 ```promql
-sum by (source_ip) (increase(llm_gateway_source_usage_missing_total{model=~"$gateway_model",source_ip=~"$source_ip"}[$__range]))
+sum by (source_ip) (increase(llm_gateway_source_usage_missing_total{model=~"$callback_model",source_ip=~"$source_ip"}[$__range]))
 ```
 
 ### 来源统计持久化状态

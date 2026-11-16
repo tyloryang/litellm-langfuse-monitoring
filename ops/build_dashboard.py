@@ -138,11 +138,12 @@ def band(items, width=8, height=7, kind="timeseries"):
 
 
 G = '{requested_model=~"$gateway_model"}'
+C = '{model=~"$callback_model"}'
 M = '{model=~"$engine_model"}'
 N = '{model_name=~"$engine_model",job="strata"}'
 H = '{deployment=~"$deployment",gpu=~"$gpu"}'
-rate = lambda name, selector="": f"rate({name}{selector}[$__rate_interval])"
-quantile = lambda name, selector, q: f"histogram_quantile({q}, sum by (le) ({rate(name + '_bucket', selector)}))"
+rate = lambda name, selector="", window="$__rate_interval": f"rate({name}{selector}[{window}])"
+quantile = lambda name, selector, q, window="$__rate_interval": f"histogram_quantile({q}, sum by (le) ({rate(name + '_bucket', selector, window)}))"
 
 row("01 · 实时总览 / 与 Strata Monitor 对齐")
 band([
@@ -150,7 +151,7 @@ band([
     ("解码速度 · 最近请求", f"strata:last_decode_tok_s{N}", "suffix:tok/s", "最近完成请求的引擎解码速度；空闲时保留最近值。"),
     ("GPU 利用率", f"llm:gpu_utilization_percent{H}", "percent", "来自 Strata 实际硬件采样；DCGM 部署可复用相同面板。"),
     ("显存占用率", f"100 * llm:gpu_memory_used_bytes{H} / llm:gpu_memory_total_bytes{H}", "percent", "驻留模型也占显存，空闲时显存通常不会清零。"),
-    ("最近 TTFT · 引擎", f"strata_extra_last_request_ttft_seconds{M}", "s", "引擎队列到原始首 Token；区别于服务 histogram 和网关迭代器的首输出标记。"),
+    ("TTFT · 引擎近5分钟 P50", quantile("llm:engine_ttft_seconds", M, .5, "5m") + ' and on() (sum(increase(llm:engine_ttft_seconds_bucket{model=~"$engine_model",le="+Inf"}[5m])) > 0)', "s", "近 5 分钟引擎 histogram 的 P50；没有新样本时显示暂无样本，不表示最近一次请求的精确 TTFT。"),
     ("最近 TPOT · 引擎均值", f"strata_extra_last_request_engine_tpot_seconds{M}", "s", "decode_ms / 1000 / (output_tokens - 1)，包含推理 Token；不是逐 Token ITL。"),
 ], width=4, height=5, kind="stat")
 band([
@@ -160,17 +161,17 @@ band([
 ])
 row("02 · 首输出、每 Token 时间与请求延迟")
 band([
-    ("TTFT · 网关 P50 / P95 / P99", [quantile("llm_gateway_ttft_seconds", '{model=~"$gateway_model"}', q) for q in (.5, .95, .99)], "s", "从网关接收到第一个有效内容、推理或工具增量。仅统计流式。"),
-    ("TPOT · 网关请求均值 P50 / P95 / P99", [quantile("llm_gateway_tpot_seconds", '{model=~"$gateway_model"}', q) for q in (.5, .95, .99)], "s", "每请求 (last-first)/(completion_tokens-1)。仅成功、usage 完整且至少两帧有效输出的流式请求；网络合并帧会影响估计。"),
-    ("首段可见答案 · P50 / P95", [quantile("llm_gateway_first_answer_seconds", '{model=~"$gateway_model"}', q) for q in (.5, .95)], "s", "排除纯推理及工具增量，长思考模型的该值通常高于 TTFT。"),
-    ("TTFT · 引擎 P50 / P95", [quantile("llm:engine_ttft_seconds", M, q) for q in (.5, .95)], "s"),
+    ("TTFT · 网关 P50 / P95 / P99", [quantile("llm_gateway_ttft_seconds", C, q, "5m") for q in (.5, .95, .99)], "s", "从网关接收到第一个有效内容、推理或工具增量。仅统计流式；固定 5 分钟窗口。"),
+    ("TPOT · 网关请求均值 P50 / P95 / P99", [quantile("llm_gateway_tpot_seconds", C, q) for q in (.5, .95, .99)], "s", "每请求 (last-first)/(completion_tokens-1)。仅成功、usage 完整且至少两帧有效输出的流式请求；网络合并帧会影响估计。"),
+    ("首段可见答案 · P50 / P95", [quantile("llm_gateway_first_answer_seconds", C, q) for q in (.5, .95)], "s", "排除纯推理及工具增量，长思考模型的该值通常高于 TTFT。"),
+    ("TTFT · 引擎 P50 / P95", [quantile("llm:engine_ttft_seconds", M, q, "5m") for q in (.5, .95)], "s", "固定 5 分钟窗口，减少低流量场景下的空窗。"),
     ("ITL · 引擎 P50 / P95", [quantile("llm:engine_itl_seconds", M, q) for q in (.5, .95)], "s", "vLLM/SGLang 的引擎 ITL；Strata 当前由 decode 平均间隔按 Token 间隔数加权估算。不要当作请求级 TPOT。"),
-    ("端到端延迟 · P50 / P95 / P99", [quantile("llm_gateway_e2e_seconds", '{model=~"$gateway_model"}', q) for q in (.5, .95, .99)], "s"),
+    ("端到端延迟 · P50 / P95 / P99", [quantile("llm_gateway_e2e_seconds", C, q) for q in (.5, .95, .99)], "s"),
 ])
 band([
     ("LiteLLM 上游 API 延迟 P95", quantile("litellm_llm_api_latency_metric", G, .95), "s"),
     ("LiteLLM 网关额外开销 P95", quantile("litellm_overhead_latency_metric", G, .95), "s"),
-    ("TPOT 被排除的请求", 'sum by (reason) (increase(llm_gateway_tpot_skipped_total{model=~"$gateway_model"}[$__range]))', "short", "非流式、少 Token、usage 缺失、帧合并及失败分别计数。"),
+    ("TPOT 被排除的请求", 'sum by (reason) (increase(llm_gateway_tpot_skipped_total{model=~"$callback_model"}[$__range]))', "short", "非流式、少 Token、usage 缺失、帧合并及失败分别计数。"),
 ])
 row("03 · Token、吞吐和请求质量")
 band([
@@ -184,7 +185,7 @@ band([
 band([
     ("期间输入 / 输出 Token", [f"sum(increase(litellm_input_tokens_metric_total{G}[$__range]))", f"sum(increase(litellm_output_tokens_metric_total{G}[$__range]))"], "short"),
     ("缓存读取 / 推理 Token 速率", [f"sum({rate('litellm_input_cached_tokens_metric_total', G)})", f"sum({rate('litellm_output_reasoning_tokens_metric_total', G)})"], "suffix:tok/s", "是否提供细分 usage 取决于上游；无字段时不伪造数据。"),
-    ("工具调用提议 / s", 'sum by (model) (rate(llm_gateway_tool_proposals_total{model=~"$gateway_model"}[$__rate_interval]))', "ops", "模型返回的工具调用提议，不代表工具已经执行。执行结果到 Langfuse 工具 span 查看。"),
+    ("工具调用提议 / s", 'sum by (model) (rate(llm_gateway_tool_proposals_total{model=~"$callback_model"}[$__rate_interval]))', "ops", "模型返回的工具调用提议，不代表工具已经执行。执行结果到 Langfuse 工具 span 查看。"),
 ])
 row("04 · Strata 缓存、上下文和 MTP")
 band([
@@ -215,13 +216,13 @@ band([
     ("采集目标 UP", 'up{job=~"litellm|strata|strata-extra|vllm|sglang|gpu-dcgm"}', "short", "0=采集异常；不存在的部署不会伪装成正常。"),
     ("Strata JSON 采集健康 / 数据年龄", ["strata_extra_up", "time() - strata_extra_last_success_timestamp_seconds"], "short", "结合轮询间隔、HTTP 超时和抓取周期解释数据年龄。"),
     ("Langfuse 上报失败 / 本地构造错误", ['increase(llm_gateway_otel_exports_total{status="failure"}[$__range])', "increase(llm_gateway_observation_errors_total[$__range])"], "short", "分别追踪远程 OTLP HTTP 导出失败与本地构造错误；异步队列的超量丢弃需结合网关日志。"),
-    ("未配置价格的请求", 'sum(increase(llm_gateway_unpriced_requests_total{model=~"$gateway_model"}[$__range]))', "short", "本地模型无官方单价时标为未配置。应先设置真实每 Token 成本，再解释费用为零。"),
+    ("未配置价格的请求", 'sum(increase(llm_gateway_unpriced_requests_total{model=~"$callback_model"}[$__range]))', "short", "本地模型无官方单价时标为未配置。应先设置真实每 Token 成本，再解释费用为零。"),
     ("LiteLLM 费用 · USD", f"sum(increase(litellm_spend_metric_total{G}[$__range]))", "currencyUSD", "需要单独配置 LiteLLM model_info 的价格，未配置时 0 不代表免费。"),
     ("vLLM / SGLang KV Cache 占用", f"llm:engine_kv_usage_ratio{M}", "percentunit", "本机仅部署 Strata 时该面板无样本；Strata 上下文占用在单独面板。"),
 ])
 
 row("07 · 来源 IP 与 Token 用量")
-S = '{model=~"$gateway_model",source_ip=~"$source_ip"}'
+S = '{model=~"$callback_model",source_ip=~"$source_ip"}'
 def source_tokens(kind):
     return 'llm_gateway_source_tokens_total' + S[:-1] + ',token_type=~"' + kind + '"}'
 
@@ -302,7 +303,8 @@ dashboard = {"id": None, "uid": "litellm-gpu-overview", "title": "LLM 推理观�
                  "url": REFERENCE_URL, "targetBlank": True, "icon": "doc", "includeVars": False, "keepTime": False}], "panels": panels,
              "templating": {"list": [{"name": "DS_PROMETHEUS", "label": "数据源", "type": "datasource", "query": "prometheus",
                                       "current": {}, "options": [], "refresh": 1},
-                                     variable("gateway_model", "网关模型", "label_values(litellm_proxy_total_requests_metric_total, requested_model)"),
+                                     variable("gateway_model", "请求模型", "label_values(litellm_proxy_total_requests_metric_total, requested_model)"),
+                                     variable("callback_model", "回调模型", "label_values(llm_gateway_completions_total, model)"),
                                      variable("source_ip", "来源 IP", 'label_values(llm_gateway_source_requests_total, source_ip)'),
                                      variable("routed_model", "路由模型", "label_values(llm_gateway_auto_routes_total, routed_model)"),
                                      variable("context_tier", "上下文档位", "label_values(llm_gateway_auto_routes_total, context_tier)"),

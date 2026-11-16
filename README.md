@@ -8,6 +8,12 @@
 
 同一云服务器的双 A100 已完成 Strata 真实非流式 / 流式推理，以及 Langfuse Generation 和合成工具链验证，具体模型哈希、CUDA 12 配置、Trace ID 和验收范围见[云端真实推理记录](docs/cloud-real-inference-20261116.md)。该结果不替代麒麟 V10 的离线冷安装验收。
 
+从准备机整理物料、迁移到麒麟 V10、配置多模型网关及验证客户端的步骤见[麒麟 V10 全链路离线部署手册](docs/kylin-v10-full-offline-deployment-20261116.md)。其中列明现有离线包尚缺的 Strata、模型与目标系统依赖，并附云端界面截图及待完成的目标环境验收。
+
+如果目标机已有容器环境和 Strata，可按[已有 Strata 的离线包使用入口](docs/kylin-v10-reuse-offline-bundle-20261116.md)复用现有服务，网关、Langfuse 和监控通过离线镜像部署。具体系统工具和 RPM 候选的验证边界见[麒麟 V10 宿主工具准备](docs/kylin-v10-package-preparation.md)；候选 RPM 尚未验证与目标机兼容。
+
+云端 Strata 的 JSON 参数、日志抽样和 batch / pipeline 冲突检查见[2026-11-16 配置核对记录](docs/cloud-strata-json-log-audit-20261116.md)。
+
 ## 1. 项目背景
 
 原环境已经运行 LiteLLM、Langfuse、Prometheus、Grafana 和 Strata 推理服务，但这些组件的原生能力没有形成一条完整的观测链路：

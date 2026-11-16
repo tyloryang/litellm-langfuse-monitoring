@@ -338,8 +338,8 @@
     },
     {
       "id": 6,
-      "title": "最近 TTFT · 引擎",
-      "description": "**计算公式**\n\n`TTFT_last_engine = t_first_raw_engine_token − t_enter_engine_queue`，即 `requests[0].first_engine_token_s`。\n\n**统计口径与边界**\n\n单位秒，包含队列与 Prefill；Strata 记录到毫秒精度。此字段与引擎 histogram 的 st.first_token 使用不同标记，也与网关首个可输出增量不同。\n\n引擎队列到原始首 Token；区别于服务 histogram 和网关迭代器的首输出标记。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nstrata_extra_last_request_ttft_seconds{model=~\"$engine_model\"}\n```",
+      "title": "TTFT · 引擎近5分钟 P50",
+      "description": "**计算公式**\n\n`TTFT_P50_5m = histogram_quantile(0.50, Σ_by_le rate(engine_ttft_bucket[5m]))`；仅当近 5 分钟有新样本时展示。\n\n**统计口径与边界**\n\n单位秒；使用引擎服务 histogram 的首输出时间，按桶估计中位数。它不是最近单个请求的原始首 Token 时间；部分 Strata 版本没有 first_engine_token_s，不能伪造该字段。\n\n近 5 分钟引擎 histogram 的 P50；没有新样本时显示暂无样本，不表示最近一次请求的精确 TTFT。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[5m]))) and on() (sum(increase(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\",le=\"+Inf\"}[5m])) > 0)\n```",
       "type": "stat",
       "gridPos": {
         "x": 16,
@@ -396,8 +396,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "strata_extra_last_request_ttft_seconds{model=~\"$engine_model\"}",
-          "legendFormat": "{{model}}",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[5m]))) and on() (sum(increase(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\",le=\"+Inf\"}[5m])) > 0)",
+          "legendFormat": "P50",
           "instant": true,
           "range": false,
           "datasource": {
@@ -784,7 +784,7 @@
     {
       "id": 12,
       "title": "TTFT · 网关 P50 / P95 / P99",
-      "description": "**计算公式**\n\n每请求 `TTFT = t_first_valid_delta − t0`；面板对该 histogram 计算 `Q(0.50)`、`Q(0.95)`、`Q(0.99)`。\n\n**统计口径与边界**\n\nt0 为网关 pre-call hook 的单调时钟；有效增量包括正文、推理或工具名 / 参数，排除 role、空帧及 usage。仅流式有样本；已产生首输出后失败的请求仍可有 TTFT。时间戳在网关迭代器取样，不是客户端实际收包时间。\n\n从网关接收到第一个有效内容、推理或工具增量。仅统计流式。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```\n\n查询 C：\n```promql\nhistogram_quantile(0.99, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```",
+      "description": "**计算公式**\n\n每请求 `TTFT = t_first_valid_delta − t0`；面板对该 histogram 计算 `Q(0.50)`、`Q(0.95)`、`Q(0.99)`。\n\n**统计口径与边界**\n\nt0 为网关 pre-call hook 的单调时钟；有效增量包括正文、推理或工具名 / 参数，排除 role、空帧及 usage。仅流式有样本；已产生首输出后失败的请求仍可有 TTFT。时间戳在网关迭代器取样，不是客户端实际收包时间。\n\n从网关接收到第一个有效内容、推理或工具增量。仅统计流式；固定 5 分钟窗口。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$callback_model\"}[5m])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$callback_model\"}[5m])))\n```\n\n查询 C：\n```promql\nhistogram_quantile(0.99, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$callback_model\"}[5m])))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -855,7 +855,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$callback_model\"}[5m])))",
           "legendFormat": "P50",
           "instant": false,
           "range": true,
@@ -866,7 +866,7 @@
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$callback_model\"}[5m])))",
           "legendFormat": "P95",
           "instant": false,
           "range": true,
@@ -877,7 +877,7 @@
         },
         {
           "refId": "C",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(llm_gateway_ttft_seconds_bucket{model=~\"$callback_model\"}[5m])))",
           "legendFormat": "P99",
           "instant": false,
           "range": true,
@@ -891,7 +891,7 @@
     {
       "id": 13,
       "title": "TPOT · 网关请求均值 P50 / P95 / P99",
-      "description": "**计算公式**\n\n每请求 `TPOT = (t_last_valid_delta − t_first_valid_delta) / (completion_tokens − 1)`；再对每请求均值的 histogram 计算 `Q(0.50/0.95/0.99)`。\n\n**统计口径与边界**\n\n只收成功流式、最终 usage 有整数输出数 N > 1、至少两帧有效输出且 last > first 的样本。分母包含推理 Token，不能用 SSE 帧数代替。每请求权重为 1；不是逐 Token ITL 分布，也不能用 P95(E2E)−P95(TTFT) 算。\n\n每请求 (last-first)/(completion_tokens-1)。仅成功、usage 完整且至少两帧有效输出的流式请求；网络合并帧会影响估计。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```\n\n查询 C：\n```promql\nhistogram_quantile(0.99, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```",
+      "description": "**计算公式**\n\n每请求 `TPOT = (t_last_valid_delta − t_first_valid_delta) / (completion_tokens − 1)`；再对每请求均值的 histogram 计算 `Q(0.50/0.95/0.99)`。\n\n**统计口径与边界**\n\n只收成功流式、最终 usage 有整数输出数 N > 1、至少两帧有效输出且 last > first 的样本。分母包含推理 Token，不能用 SSE 帧数代替。每请求权重为 1；不是逐 Token ITL 分布，也不能用 P95(E2E)−P95(TTFT) 算。\n\n每请求 (last-first)/(completion_tokens-1)。仅成功、usage 完整且至少两帧有效输出的流式请求；网络合并帧会影响估计。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))\n```\n\n查询 C：\n```promql\nhistogram_quantile(0.99, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 8,
@@ -962,7 +962,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))",
           "legendFormat": "P50",
           "instant": false,
           "range": true,
@@ -973,7 +973,7 @@
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))",
           "legendFormat": "P95",
           "instant": false,
           "range": true,
@@ -984,7 +984,7 @@
         },
         {
           "refId": "C",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(llm_gateway_tpot_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))",
           "legendFormat": "P99",
           "instant": false,
           "range": true,
@@ -998,7 +998,7 @@
     {
       "id": 14,
       "title": "首段可见答案 · P50 / P95",
-      "description": "**计算公式**\n\n每请求 `TTFA = t_first_visible_content − t0`；对 histogram 计算 `Q(0.50)`、`Q(0.95)`。\n\n**统计口径与边界**\n\n只以非空正文 content / output_text.delta 作为首次可见答案；纯推理与工具参数不算。长思考时 TTFA 可大于 TTFT，无正文则无该样本。\n\n排除纯推理及工具增量，长思考模型的该值通常高于 TTFT。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```",
+      "description": "**计算公式**\n\n每请求 `TTFA = t_first_visible_content − t0`；对 histogram 计算 `Q(0.50)`、`Q(0.95)`。\n\n**统计口径与边界**\n\n只以非空正文 content / output_text.delta 作为首次可见答案；纯推理与工具参数不算。长思考时 TTFA 可大于 TTFT，无正文则无该样本。\n\n排除纯推理及工具增量，长思考模型的该值通常高于 TTFT。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 16,
@@ -1069,7 +1069,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))",
           "legendFormat": "P50",
           "instant": false,
           "range": true,
@@ -1080,7 +1080,7 @@
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_gateway_first_answer_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))",
           "legendFormat": "P95",
           "instant": false,
           "range": true,
@@ -1094,7 +1094,7 @@
     {
       "id": 15,
       "title": "TTFT · 引擎 P50 / P95",
-      "description": "**计算公式**\n\nStrata 每请求写入 `TTFT_hist = st.first_token − request.started`；对归一化 histogram 计算 `Q(0.50)`、`Q(0.95)`。\n\n**统计口径与边界**\n\n保留引擎服务原始首输出标记，不在 Grafana 重建。该标记可能受到服务端解析 / 缓冲影响，与最近 first_engine_token_s 的原始 Token 标记不相同。vLLM / SGLang 使用其各自原生 histogram。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[$__rate_interval])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[$__rate_interval])))\n```",
+      "description": "**计算公式**\n\nStrata 每请求写入 `TTFT_hist = st.first_token − request.started`；对归一化 histogram 计算 `Q(0.50)`、`Q(0.95)`。\n\n**统计口径与边界**\n\n保留引擎服务原始首输出标记，不在 Grafana 重建。该标记可能受到服务端解析 / 缓冲影响，与最近 first_engine_token_s 的原始 Token 标记不相同。vLLM / SGLang 使用其各自原生 histogram。\n\n固定 5 分钟窗口，减少低流量场景下的空窗。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[5m])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[5m])))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -1165,7 +1165,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[5m])))",
           "legendFormat": "P50",
           "instant": false,
           "range": true,
@@ -1176,7 +1176,7 @@
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm:engine_ttft_seconds_bucket{model=~\"$engine_model\"}[5m])))",
           "legendFormat": "P95",
           "instant": false,
           "range": true,
@@ -1286,7 +1286,7 @@
     {
       "id": 17,
       "title": "端到端延迟 · P50 / P95 / P99",
-      "description": "**计算公式**\n\n每请求 `E2E = max(0, t_record_callback − t0)`；对 histogram 计算 `Q(0.50/0.95/0.99)`。\n\n**统计口径与边界**\n\n合并所选模型的 stream=true / false 与成功 / 失败样本；从网关 pre-call hook 计时，到终止回调记录。包含流式消费及回调调度时间，不包含 hook 之前的处理、客户端网络与页面渲染。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```\n\n查询 C：\n```promql\nhistogram_quantile(0.99, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))\n```",
+      "description": "**计算公式**\n\n每请求 `E2E = max(0, t_record_callback − t0)`；对 histogram 计算 `Q(0.50/0.95/0.99)`。\n\n**统计口径与边界**\n\n合并所选模型的 stream=true / false 与成功 / 失败样本；从网关 pre-call hook 计时，到终止回调记录。包含流式消费及回调调度时间，不包含 hook 之前的处理、客户端网络与页面渲染。\n\n**单位**：秒；Grafana 可自动显示为毫秒等子单位。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nhistogram_quantile(0.5, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))\n```\n\n查询 B：\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))\n```\n\n查询 C：\n```promql\nhistogram_quantile(0.99, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 16,
@@ -1357,7 +1357,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))",
           "legendFormat": "P50",
           "instant": false,
           "range": true,
@@ -1368,7 +1368,7 @@
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))",
           "legendFormat": "P95",
           "instant": false,
           "range": true,
@@ -1379,7 +1379,7 @@
         },
         {
           "refId": "C",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$gateway_model\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(llm_gateway_e2e_seconds_bucket{model=~\"$callback_model\"}[$__rate_interval])))",
           "legendFormat": "P99",
           "instant": false,
           "range": true,
@@ -1563,7 +1563,7 @@
     {
       "id": 20,
       "title": "TPOT 被排除的请求",
-      "description": "**计算公式**\n\n`excluded(reason) = Σ increase(llm_gateway_tpot_skipped_total{reason}[R])`，R 为看板选择的时间范围。\n\n**统计口径与边界**\n\n按 failed、non_stream、missing_usage、too_few_tokens、coalesced_or_no_output 分类。increase 对边界外推，可能显示小数；这些请求不会被填成 0 秒混入 TPOT。\n\n非流式、少 Token、usage 缺失、帧合并及失败分别计数。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (reason) (increase(llm_gateway_tpot_skipped_total{model=~\"$gateway_model\"}[$__range]))\n```",
+      "description": "**计算公式**\n\n`excluded(reason) = Σ increase(llm_gateway_tpot_skipped_total{reason}[R])`，R 为看板选择的时间范围。\n\n**统计口径与边界**\n\n按 failed、non_stream、missing_usage、too_few_tokens、coalesced_or_no_output 分类。increase 对边界外推，可能显示小数；这些请求不会被填成 0 秒混入 TPOT。\n\n非流式、少 Token、usage 缺失、帧合并及失败分别计数。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (reason) (increase(llm_gateway_tpot_skipped_total{model=~\"$callback_model\"}[$__range]))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 16,
@@ -1634,7 +1634,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (reason) (increase(llm_gateway_tpot_skipped_total{model=~\"$gateway_model\"}[$__range]))",
+          "expr": "sum by (reason) (increase(llm_gateway_tpot_skipped_total{model=~\"$callback_model\"}[$__range]))",
           "legendFormat": "{{reason}}",
           "instant": false,
           "range": true,
@@ -2376,7 +2376,7 @@
     {
       "id": 30,
       "title": "工具调用提议 / s",
-      "description": "**计算公式**\n\n每次模型响应按 `Σ len(choice.message.tool_calls)` 增加 counter；面板按 model 计算 `Σ rate(tool_proposals_total[W])`。\n\n**统计口径与边界**\n\n单位次 / 秒，一次模型响应可提出多个工具调用。这里只统计模型提议，实际执行数量、耗时和结果由客户端 Langfuse TOOL Span 记录。\n\n模型返回的工具调用提议，不代表工具已经执行。执行结果到 Langfuse 工具 span 查看。\n\n**单位**：次 / 秒。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (model) (rate(llm_gateway_tool_proposals_total{model=~\"$gateway_model\"}[$__rate_interval]))\n```",
+      "description": "**计算公式**\n\n每次模型响应按 `Σ len(choice.message.tool_calls)` 增加 counter；面板按 model 计算 `Σ rate(tool_proposals_total[W])`。\n\n**统计口径与边界**\n\n单位次 / 秒，一次模型响应可提出多个工具调用。这里只统计模型提议，实际执行数量、耗时和结果由客户端 Langfuse TOOL Span 记录。\n\n模型返回的工具调用提议，不代表工具已经执行。执行结果到 Langfuse 工具 span 查看。\n\n**单位**：次 / 秒。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (model) (rate(llm_gateway_tool_proposals_total{model=~\"$callback_model\"}[$__rate_interval]))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 16,
@@ -2447,7 +2447,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (model) (rate(llm_gateway_tool_proposals_total{model=~\"$gateway_model\"}[$__rate_interval]))",
+          "expr": "sum by (model) (rate(llm_gateway_tool_proposals_total{model=~\"$callback_model\"}[$__rate_interval]))",
           "legendFormat": "{{model}}",
           "instant": false,
           "range": true,
@@ -4427,7 +4427,7 @@
     {
       "id": 55,
       "title": "未配置价格的请求",
-      "description": "**计算公式**\n\n`unpriced = Σ increase(llm_gateway_unpriced_requests_total[R])`；回调在两项单价或有效 usage 不完整时每请求加 1。\n\n**统计口径与边界**\n\nR = $__range。此 counter 表示回调无法完整核算的请求数，不是费用；配置 GATEWAY 单价也不等价于已配置 LiteLLM spend 所需的 model_info 价格。\n\n本地模型无官方单价时标为未配置。应先设置真实每 Token 成本，再解释费用为零。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum(increase(llm_gateway_unpriced_requests_total{model=~\"$gateway_model\"}[$__range]))\n```",
+      "description": "**计算公式**\n\n`unpriced = Σ increase(llm_gateway_unpriced_requests_total[R])`；回调在两项单价或有效 usage 不完整时每请求加 1。\n\n**统计口径与边界**\n\nR = $__range。此 counter 表示回调无法完整核算的请求数，不是费用；配置 GATEWAY 单价也不等价于已配置 LiteLLM spend 所需的 model_info 价格。\n\n本地模型无官方单价时标为未配置。应先设置真实每 Token 成本，再解释费用为零。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum(increase(llm_gateway_unpriced_requests_total{model=~\"$callback_model\"}[$__range]))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -4498,7 +4498,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(llm_gateway_unpriced_requests_total{model=~\"$gateway_model\"}[$__range]))",
+          "expr": "sum(increase(llm_gateway_unpriced_requests_total{model=~\"$callback_model\"}[$__range]))",
           "legendFormat": "{{model}}",
           "instant": false,
           "range": true,
@@ -4697,7 +4697,7 @@
     {
       "id": 59,
       "title": "来源 IP Token 用量 · 所选时段",
-      "description": "**计算公式**\n\n对每个来源 IP 分别计算 `I=Σ increase(source_tokens_total{token_type=\"input\"}[R])`、`O=Σ increase(...{token_type=\"output\"}[R])`、`Total=I+O`、`Requests=Σ increase(source_requests_total[R])`。\n\n**统计口径与边界**\n\nR 为所选时间跨度，表格使用当前时点 instant 查询并按 source_ip 关联列，模型和来源 IP 筛选均生效。输入包含缓存、输出包含推理，细分不可再次加到总量。increase 为采样估算，窗口边界及首次抓取会影响结果；精确的启用后累计量见旁边累计表。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input\"}[$__range]))\n```\n\n查询 B：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"output\"}[$__range]))\n```\n\n查询 C：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input|output\"}[$__range]))\n```\n\n查询 D：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_requests_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\"}[$__range]))\n```",
+      "description": "**计算公式**\n\n对每个来源 IP 分别计算 `I=Σ increase(source_tokens_total{token_type=\"input\"}[R])`、`O=Σ increase(...{token_type=\"output\"}[R])`、`Total=I+O`、`Requests=Σ increase(source_requests_total[R])`。\n\n**统计口径与边界**\n\nR 为所选时间跨度，表格使用当前时点 instant 查询并按 source_ip 关联列，模型和来源 IP 筛选均生效。输入包含缓存、输出包含推理，细分不可再次加到总量。increase 为采样估算，窗口边界及首次抓取会影响结果；精确的启用后累计量见旁边累计表。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input\"}[$__range]))\n```\n\n查询 B：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"output\"}[$__range]))\n```\n\n查询 C：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input|output\"}[$__range]))\n```\n\n查询 D：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_requests_total{model=~\"$callback_model\",source_ip=~\"$source_ip\"}[$__range]))\n```",
       "type": "table",
       "gridPos": {
         "x": 0,
@@ -4822,7 +4822,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input\"}[$__range]))",
+          "expr": "sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input\"}[$__range]))",
           "legendFormat": "输入 Token",
           "instant": true,
           "range": false,
@@ -4834,7 +4834,7 @@
         },
         {
           "refId": "B",
-          "expr": "sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"output\"}[$__range]))",
+          "expr": "sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"output\"}[$__range]))",
           "legendFormat": "输出 Token",
           "instant": true,
           "range": false,
@@ -4846,7 +4846,7 @@
         },
         {
           "refId": "C",
-          "expr": "sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input|output\"}[$__range]))",
+          "expr": "sum by (source_ip) (increase(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input|output\"}[$__range]))",
           "legendFormat": "总 Token",
           "instant": true,
           "range": false,
@@ -4858,7 +4858,7 @@
         },
         {
           "refId": "D",
-          "expr": "sum by (source_ip) (increase(llm_gateway_source_requests_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\"}[$__range]))",
+          "expr": "sum by (source_ip) (increase(llm_gateway_source_requests_total{model=~\"$callback_model\",source_ip=~\"$source_ip\"}[$__range]))",
           "legendFormat": "请求数",
           "instant": true,
           "range": false,
@@ -4901,7 +4901,7 @@
     {
       "id": 60,
       "title": "来源 IP Token 累计 · 启用以来",
-      "description": "**计算公式**\n\n每个来源 IP：`I=Σ source_tokens_total{token_type=\"input\"}`、`O=Σ ...{token_type=\"output\"}`、`Total=I+O`、`Requests=Σ source_requests_total`。\n\n**统计口径与边界**\n\nSQLite 持久化累计值从来源统计开始时间计数，重启不清零；此表不受看板时间范围过滤，模型和来源 IP 筛选仍生效。只统计经过网关且收到最终 usage 的计量，缺失 usage 的请求单独计数；失败请求有有效 usage 时也计入。历史未采集来源 IP 的请求不能回溯归属。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input\"})\n```\n\n查询 B：\n```promql\nsum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"output\"})\n```\n\n查询 C：\n```promql\nsum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input|output\"})\n```\n\n查询 D：\n```promql\nsum by (source_ip) (llm_gateway_source_requests_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\"})\n```",
+      "description": "**计算公式**\n\n每个来源 IP：`I=Σ source_tokens_total{token_type=\"input\"}`、`O=Σ ...{token_type=\"output\"}`、`Total=I+O`、`Requests=Σ source_requests_total`。\n\n**统计口径与边界**\n\nSQLite 持久化累计值从来源统计开始时间计数，重启不清零；此表不受看板时间范围过滤，模型和来源 IP 筛选仍生效。只统计经过网关且收到最终 usage 的计量，缺失 usage 的请求单独计数；失败请求有有效 usage 时也计入。历史未采集来源 IP 的请求不能回溯归属。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input\"})\n```\n\n查询 B：\n```promql\nsum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"output\"})\n```\n\n查询 C：\n```promql\nsum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input|output\"})\n```\n\n查询 D：\n```promql\nsum by (source_ip) (llm_gateway_source_requests_total{model=~\"$callback_model\",source_ip=~\"$source_ip\"})\n```",
       "type": "table",
       "gridPos": {
         "x": 12,
@@ -5026,7 +5026,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input\"})",
+          "expr": "sum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input\"})",
           "legendFormat": "输入 Token",
           "instant": true,
           "range": false,
@@ -5038,7 +5038,7 @@
         },
         {
           "refId": "B",
-          "expr": "sum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"output\"})",
+          "expr": "sum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"output\"})",
           "legendFormat": "输出 Token",
           "instant": true,
           "range": false,
@@ -5050,7 +5050,7 @@
         },
         {
           "refId": "C",
-          "expr": "sum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input|output\"})",
+          "expr": "sum by (source_ip) (llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input|output\"})",
           "legendFormat": "总 Token",
           "instant": true,
           "range": false,
@@ -5062,7 +5062,7 @@
         },
         {
           "refId": "D",
-          "expr": "sum by (source_ip) (llm_gateway_source_requests_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\"})",
+          "expr": "sum by (source_ip) (llm_gateway_source_requests_total{model=~\"$callback_model\",source_ip=~\"$source_ip\"})",
           "legendFormat": "请求数",
           "instant": true,
           "range": false,
@@ -5105,7 +5105,7 @@
     {
       "id": 61,
       "title": "来源 IP 输入 / 输出 Token 速率",
-      "description": "**计算公式**\n\n每 IP 分别计算 `Σ rate(source_tokens_total{token_type=\"input\"}[W])` 与 `Σ rate(...{token_type=\"output\"}[W])`。\n\n**统计口径与边界**\n\nW=$__rate_interval，单位 Token/s，先对每条 counter 求 rate 再按来源 IP 求和；输入包含缓存、输出包含推理。请求结束时累计最终 usage，长请求会在完成时形成阶梯。\n\n**单位**：Token / 秒。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input\"}[$__rate_interval]))\n```\n\n查询 B：\n```promql\nsum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"output\"}[$__rate_interval]))\n```",
+      "description": "**计算公式**\n\n每 IP 分别计算 `Σ rate(source_tokens_total{token_type=\"input\"}[W])` 与 `Σ rate(...{token_type=\"output\"}[W])`。\n\n**统计口径与边界**\n\nW=$__rate_interval，单位 Token/s，先对每条 counter 求 rate 再按来源 IP 求和；输入包含缓存、输出包含推理。请求结束时累计最终 usage，长请求会在完成时形成阶梯。\n\n**单位**：Token / 秒。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input\"}[$__rate_interval]))\n```\n\n查询 B：\n```promql\nsum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"output\"}[$__rate_interval]))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -5176,7 +5176,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input\"}[$__rate_interval]))",
+          "expr": "sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input\"}[$__rate_interval]))",
           "legendFormat": "{{source_ip}} · 输入",
           "instant": false,
           "range": true,
@@ -5187,7 +5187,7 @@
         },
         {
           "refId": "B",
-          "expr": "sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"output\"}[$__rate_interval]))",
+          "expr": "sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"output\"}[$__rate_interval]))",
           "legendFormat": "{{source_ip}} · 输出",
           "instant": false,
           "range": true,
@@ -5201,7 +5201,7 @@
     {
       "id": 62,
       "title": "来源 IP 缓存 / 推理 Token 速率",
-      "description": "**计算公式**\n\n每 IP 分别计算 `Σ rate(source_tokens_total{token_type=\"input_cached\"}[W])` 和 `Σ rate(...{token_type=\"output_reasoning\"}[W])`。\n\n**统计口径与边界**\n\n缓存与推理分别是输入和输出子集，不能重复加总。上游缺少细分字段时累计值保持 0，是否实际提供细分以 Langfuse usage_raw 为准。\n\n**单位**：Token / 秒。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input_cached\"}[$__rate_interval]))\n```\n\n查询 B：\n```promql\nsum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"output_reasoning\"}[$__rate_interval]))\n```",
+      "description": "**计算公式**\n\n每 IP 分别计算 `Σ rate(source_tokens_total{token_type=\"input_cached\"}[W])` 和 `Σ rate(...{token_type=\"output_reasoning\"}[W])`。\n\n**统计口径与边界**\n\n缓存与推理分别是输入和输出子集，不能重复加总。上游缺少细分字段时累计值保持 0，是否实际提供细分以 Langfuse usage_raw 为准。\n\n**单位**：Token / 秒。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input_cached\"}[$__rate_interval]))\n```\n\n查询 B：\n```promql\nsum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"output_reasoning\"}[$__rate_interval]))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 8,
@@ -5272,7 +5272,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"input_cached\"}[$__rate_interval]))",
+          "expr": "sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"input_cached\"}[$__rate_interval]))",
           "legendFormat": "{{source_ip}} · 缓存",
           "instant": false,
           "range": true,
@@ -5283,7 +5283,7 @@
         },
         {
           "refId": "B",
-          "expr": "sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\",token_type=~\"output_reasoning\"}[$__rate_interval]))",
+          "expr": "sum by (source_ip) (rate(llm_gateway_source_tokens_total{model=~\"$callback_model\",source_ip=~\"$source_ip\",token_type=~\"output_reasoning\"}[$__rate_interval]))",
           "legendFormat": "{{source_ip}} · 推理",
           "instant": false,
           "range": true,
@@ -5297,7 +5297,7 @@
     {
       "id": 63,
       "title": "来源 IP usage 缺失请求",
-      "description": "**计算公式**\n\n每 IP `Missing=Σ increase(llm_gateway_source_usage_missing_total[R])`。\n\n**统计口径与边界**\n\n最终 prompt/input 与 completion/output Token 数缺失或无效时加 1；不使用帧数估计 Token。请求数仍记录，Token 累计可能低于实际消耗。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_usage_missing_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\"}[$__range]))\n```",
+      "description": "**计算公式**\n\n每 IP `Missing=Σ increase(llm_gateway_source_usage_missing_total[R])`。\n\n**统计口径与边界**\n\n最终 prompt/input 与 completion/output Token 数缺失或无效时加 1；不使用帧数估计 Token。请求数仍记录，Token 累计可能低于实际消耗。\n\n**单位**：计数或原始 gauge；具体单位见该序列口径。\n\n**实际 PromQL**\n\n查询 A：\n```promql\nsum by (source_ip) (increase(llm_gateway_source_usage_missing_total{model=~\"$callback_model\",source_ip=~\"$source_ip\"}[$__range]))\n```",
       "type": "timeseries",
       "gridPos": {
         "x": 16,
@@ -5368,7 +5368,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (source_ip) (increase(llm_gateway_source_usage_missing_total{model=~\"$gateway_model\",source_ip=~\"$source_ip\"}[$__range]))",
+          "expr": "sum by (source_ip) (increase(llm_gateway_source_usage_missing_total{model=~\"$callback_model\",source_ip=~\"$source_ip\"}[$__range]))",
           "legendFormat": "{{source_ip}}",
           "instant": false,
           "range": true,
@@ -6527,7 +6527,7 @@
       },
       {
         "name": "gateway_model",
-        "label": "网关模型",
+        "label": "请求模型",
         "type": "query",
         "datasource": {
           "type": "prometheus",
@@ -6537,6 +6537,30 @@
         "query": {
           "query": "label_values(litellm_proxy_total_requests_metric_total, requested_model)",
           "refId": "gateway_model"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "name": "callback_model",
+        "label": "回调模型",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(llm_gateway_completions_total, model)",
+        "query": {
+          "query": "label_values(llm_gateway_completions_total, model)",
+          "refId": "callback_model"
         },
         "refresh": 1,
         "includeAll": true,

@@ -41,7 +41,7 @@
 | usage / 成本 | 互斥 Token 分量总和正确；费用已核价或明确 unconfigured | 待验收 | |
 | 工具执行链 | 同一 Trace 下 AGENT + TOOL + 两次 GENERATION，17+25=42 | 待验收 | |
 | Prometheus | 必需 jobs UP、16 recording rule / 9 alerts 加载 | 待验收 | |
-| Grafana | 59 面板 / 94 查询通过，必需 GPU / Token / 时延序列有限且可见 | 待验收 | |
+| Grafana | 按本次实际交付的看板 JSON 核对面板与查询数量；当前工作区版本为 68 面板 / 105 查询。必需 GPU / Token / 时延序列有限且可见，来源 IP 表按 IP 核对行和用量 | 待验收 | |
 | 来源 IP | 两个真实来源归属正确；伪造 XFF / metadata 不改变归属；NAT 限制已记录 | 待验收 | |
 | 按 IP 用量 | 返回 usage 与 SQLite 累计差值一致；input + output 不重复加缓存 / 推理子集；时段表外推口径明确 | 待验收 | |
 | 来源账本 | 挂载目录 / UID / SELinux 可写，持久化=1、写入错误=0；重启后累计 / 起点不变，一致性备份恢复通过 | 待验收 | |
