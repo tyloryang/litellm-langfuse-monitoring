@@ -145,7 +145,7 @@ sha256sum -c MANUAL-UPDATE-SHA256SUMS
 ```bash
 set -euo pipefail
 cd /opt/llm-handoff/downloads
-grep 'candidate-20261116-v3.tar.gz$' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | grep 'candidate-20261116-v3\.tar\.gz$' | sha256sum -c -
 test ! -e nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar
 test ! -e nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.incomplete
 gzip -t nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz

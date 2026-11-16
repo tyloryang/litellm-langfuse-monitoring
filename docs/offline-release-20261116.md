@@ -19,16 +19,16 @@
 ```bash
 cd /path/to/downloads
 # 完整下载四段后，先核对每一段。
-grep '\.part0[1-4]$' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | grep '\.part0[1-4]$' | sha256sum -c -
 sha256sum -c VALIDATED-SHA256SUMS
 cat nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part01 \
     nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part02 \
     nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part03 \
     nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part04 \
     > nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz
-grep 'candidate-20261116-v3.tar.gz$' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | grep 'candidate-20261116-v3\.tar\.gz$' | sha256sum -c -
 gzip -dc nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz > nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar
-grep 'candidate-20261116-v3.tar$' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | grep 'candidate-20261116-v3\.tar$' | sha256sum -c -
 tar -xf nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar
 cd nginx-litellm-langfuse
 sha256sum -c SHA256SUMS

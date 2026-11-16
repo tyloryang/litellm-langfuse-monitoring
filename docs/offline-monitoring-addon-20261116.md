@@ -11,7 +11,7 @@ sha256sum -c MONITORING-SHA256SUMS
 mkdir -p /opt/llm-monitoring-offline
 tar -xf monitoring-amd64-20261116.tar -C /opt/llm-monitoring-offline
 cd /opt/llm-monitoring-offline/monitoring-amd64-20261116
-sha256sum -c SHA256SUMS
+tr -d '\r' < SHA256SUMS | sha256sum -c -
 gzip -t images.tar.gz
 gzip -dc images.tar.gz | docker load
 ```

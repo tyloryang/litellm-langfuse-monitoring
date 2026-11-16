@@ -1,5 +1,7 @@
 # 离线部署 README：给内网运维人员
 
+**当前推荐：** 使用 [LF 修复版完整操作指南](kylin-v10-complete-offline-operations-20261116-lf.md) 和对应 `-lf.tar` 主包。该版本修正主包和监控包内的校验清单换行；Release 提供原始五分卷和校验修复文件，按新手册可生成已验证的修复版。本文下方的旧包名和摘要保留历史含义。
+
 目标：复用内网已有 Docker、Strata 与 Qwen 模型，离线部署或重部署 Nginx、LiteLLM、Langfuse；最后通过真实请求在 Langfuse 中看到调用链。本文是入口，逐条命令与故障处理在随包 `manual/docs/kylin-v10-offline-operations-step-by-step.md`。
 
 **目标麒麟 V10 尚未完成本项目的断网冷安装验收。** 网关主包和手册更新包不包含 Strata 镜像、模型、GPU 驱动、真实账号或目标系统完整 RPM 依赖；这些需要已有或另行准备。不要以云端验证代替内网实际验收。

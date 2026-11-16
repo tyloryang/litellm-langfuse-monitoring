@@ -39,7 +39,7 @@ set -eu
 cd /opt/llm-handoff/downloads
 test ! -e nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar
 test ! -e nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.incomplete
-grep 'candidate-20261116-v3.tar.gz$' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | grep 'candidate-20261116-v3\.tar\.gz$' | sha256sum -c -
 gzip -dc nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz > nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.incomplete
 printf '%s  %s\n' '627e4b44ba9fcf4da8a7f9f3d1227348815ca021d153c978236758ced206b702' 'nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.incomplete' | sha256sum -c -
 mv nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.incomplete nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar

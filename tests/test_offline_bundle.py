@@ -36,6 +36,7 @@ class OfflineArtifacts(unittest.TestCase):
 
     def test_round_trip_does_not_claim_deployment_acceptance(self):
         self.assertFalse(self.seal()["deployment_accepted"])
+        self.assertNotIn(b"\r", (self.root / "SHA256SUMS").read_bytes())
         result = bundle.verify(self.root)
         self.assertEqual(result["stage"], "ARTIFACTS_VERIFIED")
         self.assertEqual(result["images"], 9)

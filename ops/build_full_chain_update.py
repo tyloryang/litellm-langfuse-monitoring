@@ -18,6 +18,8 @@ DOCS = (
     'cloud-strata-memlock-deployment-20261116.md', 'grafana-formulas.md',
     'offline-acceptance-template.md', 'kylin-v10-package-preparation.md',
     'cloud-history-offline-restore-20261116.md',
+    'kylin-v10-complete-offline-operations-20261116-lf.md',
+    'cloud-offline-verification-summary-20261116.md',
 )
 FILES = (
     'nginx/nginx.conf', 'litellm/config.yaml', 'litellm/token_router_config.yaml',
@@ -61,7 +63,7 @@ def main():
                     info.mtime = 0
                     tar.addfile(info, io.BytesIO(content))
     sha = hashlib.sha256(archive.read_bytes()).hexdigest()
-    checksum.write_text(sha + '  ' + NAME + '\n', encoding='ascii')
+    checksum.write_bytes((sha + '  ' + NAME + '\n').encode('ascii'))
     print('archive:', archive, 'bytes:', archive.stat().st_size, 'files:', len(data), 'sha256:', sha)
 
 

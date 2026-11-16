@@ -144,7 +144,7 @@ def seal(root, platform, python_version):
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     checksums = {name: info["sha256"] for name, info in manifest["files"].items()}
     checksums["manifest.json"] = sha256(manifest_path)
-    (root / "SHA256SUMS").write_text("".join(digest + "  " + name + "\n" for name, digest in sorted(checksums.items())), encoding="utf-8")
+    (root / "SHA256SUMS").write_bytes("".join(digest + "  " + name + "\n" for name, digest in sorted(checksums.items())).encode("utf-8"))
     return {"stage": "ARTIFACTS_SEALED", "files": len(files), "platform": platform,
             "checksum_file_sha256": sha256(root / "SHA256SUMS"), "deployment_accepted": False}
 

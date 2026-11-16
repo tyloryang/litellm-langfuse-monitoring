@@ -82,17 +82,17 @@ do
   curl -fL --retry 3 --connect-timeout 20 -o "$file" "$RELEASE/$file"
 done
 
-grep '\.part0[1-4]$' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | grep '\.part0[1-4]$' | sha256sum -c -
 sha256sum -c VALIDATED-SHA256SUMS
-sha256sum -c MONITORING-SHA256SUMS
+tr -d '\r' < MONITORING-SHA256SUMS | sha256sum -c -
 cat nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part01 \
     nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part02 \
     nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part03 \
     nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part04 \
     > nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz
-grep 'candidate-20261116-v3.tar.gz$' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | grep 'candidate-20261116-v3\.tar\.gz$' | sha256sum -c -
 gzip -dc nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz > nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar
-grep 'candidate-20261116-v3.tar$' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | grep 'candidate-20261116-v3\.tar$' | sha256sum -c -
 ```
 
 主包合并 gzip 的历史摘要为 `18d0c72ba47b918951927e5aae37b59f1a6aa39e31121c7ca6a1c5dd4ddaaf3d`；原始 tar 为 `627e4b44ba9fcf4da8a7f9f3d1227348815ca021d153c978236758ced206b702`。下载和内部清单核验都应通过；摘要要与可信发布渠道独立核对。发布包不会自动更新，若目标需要当前 TTFT 修复，应从已经审阅的当前仓库单独复制 `grafana/dashboards/litellm-gpu-overview.json`、`docs/grafana-formulas.md`，记录仓库版本和两个文件的 SHA-256；它们不是已发布旧监控包的一部分。
@@ -273,8 +273,8 @@ test ! -e /opt/llm-handoff
 mkdir -p /opt/llm-handoff
 cp -a /mnt/usb/llm-handoff/. /opt/llm-handoff/
 cd /opt/llm-handoff/downloads
-grep 'candidate-20261116-v3.tar$' SHA256SUMS | sha256sum -c -
-sha256sum -c MONITORING-SHA256SUMS
+tr -d '\r' < SHA256SUMS | grep 'candidate-20261116-v3\.tar$' | sha256sum -c -
+tr -d '\r' < MONITORING-SHA256SUMS | sha256sum -c -
 cd /opt/llm-handoff/manual
 sha256sum -c MANUAL-SHA256SUMS
 ```
@@ -780,7 +780,7 @@ mkdir -p /opt/llm-monitoring-offline
 tar -xf monitoring-amd64-20261116.tar -C /opt/llm-monitoring-offline
 MONITOR=/opt/llm-monitoring-offline/monitoring-amd64-20261116
 cd "$MONITOR"
-sha256sum -c SHA256SUMS
+tr -d '\r' < SHA256SUMS | sha256sum -c -
 gzip -t images.tar.gz
 gzip -dc images.tar.gz | docker load
 ```
@@ -797,7 +797,7 @@ cp -p "$MONITOR/source/grafana/dashboards/litellm-gpu-overview.json" "$MONITOR/s
 install -m 0644 litellm-gpu-overview.json "$MONITOR/source/grafana/dashboards/litellm-gpu-overview.json"
 cmp -s litellm-gpu-overview.json "$MONITOR/source/grafana/dashboards/litellm-gpu-overview.json"
 cd "$MONITOR"
-awk '$2 != "source/grafana/dashboards/litellm-gpu-overview.json" {print}' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | awk '$2 != "source/grafana/dashboards/litellm-gpu-overview.json" {print}' | sha256sum -c -
 ```
 
 修改看板后，原 `SHA256SUMS` 中该 JSON 的原始摘要必然不再匹配：上述命令对未修改的原清单条目继续校验，`cmp` 和 `PATCH-SHA256SUMS` 用于校验替换文件；它们不证明修改后的整包仍符合原始清单，也不证明运行时行为。未替换看板时以原清单校验结果为准。若为现场适配修改 `prepare.py` 等其他文件，应另行备份、审阅并记录这些文件修改前后的独立摘要，不能沿用上述只排除 dashboard 的检查结果冒充全包通过。公式在交付的 `manual/docs/` 和可选的 `patches/` 中，按各自清单校验。
@@ -814,12 +814,12 @@ HOST_STRATA_PORT='<实际端口>'
 python3 /opt/llm-handoff/manual/ops/adapt_monitoring_existing_strata.py \
   "$MONITOR/source/deploy/cloud-monitoring" --host-ip "$HOST_STRATA_IP" --port "$HOST_STRATA_PORT"
 cd "$MONITOR"
-awk '$2 != "source/grafana/dashboards/litellm-gpu-overview.json" && $2 != "source/deploy/cloud-monitoring/prometheus.yml" && $2 != "source/deploy/cloud-monitoring/docker-compose.yml" && $2 != "source/deploy/cloud-monitoring/prepare.py" {print}' SHA256SUMS | sha256sum -c -
+tr -d '\r' < SHA256SUMS | awk '$2 != "source/grafana/dashboards/litellm-gpu-overview.json" && $2 != "source/deploy/cloud-monitoring/prometheus.yml" && $2 != "source/deploy/cloud-monitoring/docker-compose.yml" && $2 != "source/deploy/cloud-monitoring/prepare.py" {print}' | sha256sum -c -
 sha256sum source/deploy/cloud-monitoring/prometheus.yml source/deploy/cloud-monitoring/docker-compose.yml source/deploy/cloud-monitoring/prepare.py > HOST-ADAPT-SHA256SUMS
 sha256sum -c HOST-ADAPT-SHA256SUMS
 ```
 
-脚本在发现已有 `.env`、`secrets`、备份或原始内容不符时停止；成功后备份三份原文件，将 Prometheus Strata 目标和 `strata-extra` URL 改为所给地址，并让 `prepare.py` 交互输入两次现有 Strata key。准备时输入已验证的真实 key；脚本不会读取或更改既有 Strata 进程。上面的原清单筛选统一排除了 dashboard；若未替换 dashboard，应另外核验其原始清单行，例如 `grep '  source/grafana/dashboards/litellm-gpu-overview.json$' SHA256SUMS | sha256sum -c -`。备份和新摘要仅证明文件来源与改动后的内容，不能证明目标网络、认证或指标采集成功。用户报告该适配脚本已在原监控包副本通过静态 fixture 测试；使用 Prometheus 2.45.1 原镜像、`--network none` 对适配后的样例执行 `promtool check config` 通过，包含 16 条 recording rules 和 9 条 alert rules。这只验证样例配置和规则，**未验证目标内网抓取**；还需在目标执行 `promtool`、实际抓取和页面验收。只有新容器分支才保留原版 `prepare.py` 对 `llm-a100-strata-1` 的读取。
+脚本在发现已有 `.env`、`secrets`、备份或原始内容不符时停止；成功后备份三份原文件，将 Prometheus Strata 目标和 `strata-extra` URL 改为所给地址，并让 `prepare.py` 交互输入两次现有 Strata key。准备时输入已验证的真实 key；脚本不会读取或更改既有 Strata 进程。上面的原清单筛选统一排除了 dashboard；若未替换 dashboard，应另外核验其原始清单行，例如 `tr -d '\r' < SHA256SUMS | grep '  source/grafana/dashboards/litellm-gpu-overview\.json$' | sha256sum -c -`。备份和新摘要仅证明文件来源与改动后的内容，不能证明目标网络、认证或指标采集成功。用户报告该适配脚本已在原监控包副本通过静态 fixture 测试；使用 Prometheus 2.45.1 原镜像、`--network none` 对适配后的样例执行 `promtool check config` 通过，包含 16 条 recording rules 和 9 条 alert rules。这只验证样例配置和规则，**未验证目标内网抓取**；还需在目标执行 `promtool`、实际抓取和页面验收。只有新容器分支才保留原版 `prepare.py` 对 `llm-a100-strata-1` 的读取。
 
 以下使用 `grafana.example.internal` 和 `/opt/llm-certs` 作为示例，先由管理员配置目标机可访问的域名、证书及实际网络。包内 `prepare.py` 要访问 Docker，并将两个凭据文件 `chown 65534:65534` 供 Prometheus 读取；普通用户可能无法 chown，应由具备 Docker 与 chown 权限的管理员执行，例如下面的 `sudo python3`，并核对宿主权限、SELinux 和容器内可读性。脚本失败时可能已创建部分私有目录或文件：保留现场，受控检查和备份后再决定恢复方式，不能直接删除或覆盖。`prepare.py` 默认容器名称和环境变量必须先与目标核对；不要在已经初始化的部署中重复运行。
 

@@ -118,6 +118,8 @@ def build_archive(output, files, generated):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--repair-output-dir', type=Path,
+                        help='Also create an LF-repaired archive and split manifests in this directory')
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output = args.output_dir / NAME
@@ -138,6 +140,8 @@ def main():
     docs = [
         'offline-deployment-README.md',
         'cloud-history-offline-restore-20261116.md',
+        'kylin-v10-complete-offline-operations-20261116-lf.md',
+        'cloud-offline-verification-summary-20261116.md',
         'kylin-v10-reuse-offline-bundle-20261116.md',
         'kylin-v10-full-offline-deployment-20261116.md',
         'kylin-v10-offline-operations-step-by-step.md',
@@ -200,6 +204,12 @@ def main():
     print('SHA256:', sha)
     if output.stat().st_size >= 2 * 1024**3:
         print('NOTICE: archive exceeds the GitHub Release single-asset size limit; split before upload.')
+    if args.repair_output_dir:
+        from repair_offline_archive_lf import repair
+        repair(output, args.repair_output_dir)
+        print('Use the newly generated LF archive checksum; published snapshot hashes do not describe a new build.')
+    else:
+        print('NOTICE: this legacy snapshot preserves source checksum lists; use --repair-output-dir for LF repair.')
 
 
 if __name__ == '__main__':
