@@ -137,6 +137,7 @@ def main():
     docs = [
         'kylin-v10-reuse-offline-bundle-20261116.md',
         'kylin-v10-full-offline-deployment-20261116.md',
+        'kylin-v10-offline-operations-step-by-step.md',
         'offline-release-20261116.md', 'offline-monitoring-addon-20261116.md',
         'cloud-strata-262k-tuning-20261116.md', 'cloud-strata-cpa-access-20261116.md',
         'cloud-real-inference-20261116.md', 'cloud-strata-json-log-audit-20261116.md',
