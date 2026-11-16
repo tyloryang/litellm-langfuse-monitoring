@@ -2,13 +2,13 @@
 
 本候选包适用于准备 **linux/amd64 的 Nginx、LiteLLM、Langfuse 及其存储依赖**。先准备并核验镜像、Docker / Compose 和目标机依赖，再进行断网部署。它没有包含 Strata 镜像、模型权重、Prometheus、Grafana、现场数据或密码；麒麟 V10 的完整 RPM 依赖闭包和干净机器断网冷安装还没有完成。
 
-从 [GitHub Release](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-candidate-amd64-20261116) 下载下列全部文件到同一目录。每个分卷小于 2 GiB，四个分卷按编号顺序合并；`SHA256SUMS` 和 `manifest.json` 用于核验。
+从 [GitHub Release](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-candidate-amd64-20261116) 下载下列全部文件到同一目录。四个压缩包分卷按编号顺序合并；`SHA256SUMS` 和 `manifest.json` 用于核验。
 
 | 下载文件 | 内容 |
 | --- | --- |
-| `nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.part01` 至 `part04` | 同一个 tar 的四段，必须全部下载 |
-| `SHA256SUMS` | 四个分卷和合并后 tar 的 SHA-256 |
-| `manifest.json` | 各分卷大小、SHA-256 与原始 tar 信息 |
+| `nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part01` 至 `part04` | 同一个 gzip 压缩包的四段，必须全部下载 |
+| `SHA256SUMS` | 四个分卷、合并后的 gzip 和解压后的 tar 的 SHA-256 |
+| `manifest.json` | 各分卷大小、SHA-256、gzip 和原始 tar 信息 |
 | `source-and-docs.tar.gz` | 本次发布时的仓库源码与最新迁移手册，包含登录页截图和自动路由、Grafana 说明；不同于主包内的较早源码快照 |
 
 在具备 `sha256sum` 的 Linux 准备机上恢复并核验：
@@ -17,18 +17,20 @@
 cd /path/to/downloads
 # 完整下载四段后，先核对每一段。
 grep '\.part0[1-4]$' SHA256SUMS | sha256sum -c -
-cat nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.part01 \
-    nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.part02 \
-    nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.part03 \
-    nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.part04 \
-    > nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar
+cat nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part01 \
+    nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part02 \
+    nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part03 \
+    nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part04 \
+    > nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz
+grep 'candidate-20261116-v3.tar.gz$' SHA256SUMS | sha256sum -c -
+gzip -dc nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz > nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar
 grep 'candidate-20261116-v3.tar$' SHA256SUMS | sha256sum -c -
 tar -xf nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar
 cd nginx-litellm-langfuse
 sha256sum -c SHA256SUMS
 ```
 
-原始 tar 大小为 **5,714,677,760 字节**，SHA-256 为 `627e4b44ba9fcf4da8a7f9f3d1227348815ca021d153c978236758ced206b702`。下载和合并期间需要同时存放分卷、合并文件和解压结果；还要预留 Docker 镜像层、持久化数据和备份空间。
+合并后的 gzip 大小为 **1,745,394,303 字节**，SHA-256 为 `18d0c72ba47b918951927e5aae37b59f1a6aa39e31121c7ca6a1c5dd4ddaaf3d`；原始 tar 大小为 **5,714,677,760 字节**，SHA-256 为 `627e4b44ba9fcf4da8a7f9f3d1227348815ca021d153c978236758ced206b702`。下载和合并期间需要同时存放分卷、合并文件和解压结果；还要预留 Docker 镜像层、持久化数据和备份空间。
 
 ## 包含的文件与前置依赖
 
