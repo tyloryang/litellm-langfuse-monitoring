@@ -4,6 +4,8 @@
 
 本次按用户要求复用目标机的容器环境、Strata 和模型。取得综合离线包后，先阅读[复用已有 Strata 的离线包使用入口](kylin-v10-reuse-offline-bundle-20261116.md)，依次校验、解包和恢复主包，再返回本文第 5.2 节。宿主工具检查与 CentOS / NVIDIA 候选 RPM 的来源及限制见[麒麟 V10 宿主工具准备](kylin-v10-package-preparation.md)；候选包不是已验证的麒麟 RPM 依赖闭包。云端 JSON 参数及日志抽样结果见[配置核对记录](cloud-strata-json-log-audit-20261116.md)。
 
+完整 Strata 启动 JSON、Docker Compose 的 GPU / memlock 配置，以及麒麟主机 HugeTLB 大页设置、检查与回滚，集中见[附录 A](#附录-a-strata-启动-json容器参数和主机大页)，可随本文离线阅读。对于已运行的原实例，先按第 6.3 节核查，只有现场安排变更时才应用附录中的重启或主机调优步骤。
+
 本文原有四张云端配图由用户提供，是**云端历史快照，不是麒麟目标机截图或验收证明**。Trace 图包含请求内容，来源 IP 图包含 IP；图片在本地按原样保留，公开或跨环境交付前由数据负责人审查并另行脱敏，不应直接发布。目标机的验收截图和测试记录仍需现场采集。
 
 用户另提供两张目标机环境历史照片：可辨认 Kylin Linux Advanced Server V10（Sword）、`x86_64`、双路 Intel Xeon Gold 6238R、每路 28 核 / 每核 2 线程、112 个逻辑 CPU、两张 NVIDIA A100-PCIE-40GB；GPU 图的 `nvidia-smi` 显示驱动 `535.104.12`、CUDA `12.2`，两卡上均有 `/data/Strata/engine-cuda12/strata` 进程，显存占用约 31 / 38 GiB。照片还显示主机名、进程路径、PCI / NUMA 拓扑和系统漏洞状态，移交前须由负责人审查。照片存在拍摄清晰度和时效限制，具体 SP / Build、实际驱动及 CUDA 数字、监听和模型状态须到目标机复核；进程是否由 Docker 或服务管理，截图不足以确定。该信息不证明干净机器断网安装、模型请求、迁移或目标验收通过。本手册原有四张云端截图继续保留。
@@ -371,7 +373,7 @@ docker image inspect local/strata:0.1.45-cuda12 --format '{{.Id}} {{.Os}}/{{.Arc
 
 云端 262K 记录曾以独立容器尝试 resident pack，触发磁盘剩余保护而清理候选，原 pack 未动；**resident experts 未启用**。[容量与实测记录](cloud-strata-262k-tuning-20261116.md)的快照不能替代目标机实际容量检查。
 
-云端现有配置报告 `--max-context 262144 --kv k8v4 --kv-resident 32768 --batch 4`，监控显示实际 4 槽；显式 batch 会使服务层不再从 `parallel: 6` 追加 batch，`--pipeline-windows 2` 与批槽的冲突需要按实际二进制确认。云端合成检索最高 261840 输入 Token 正确找回标记，但大幅复用缓存，不能据此推算冷预填充或麒麟的容量 / 性能。完整参数、resident 候选包保护和验收边界见前述记录；目标机应先以适配硬件的配置完成基础请求，再单独做长上下文和并发验收。
+云端修复后的配置为 `--max-context 262144 --kv k8v4 --kv-resident 32768 --batch 4`，顶层 `parallel` 已统一为 4，运行指标显示实际 4 槽。此前 `parallel: 6` 与 `--pipeline-windows 2` 属于历史配置，其中后者被实际引擎因 batch 槽位关闭；修复后完整配置见附录 A。云端合成检索最高 261840 输入 Token 正确找回标记，但大幅复用缓存，不能据此推算冷预填充或麒麟的容量 / 性能。目标机应先以适配硬件的配置完成基础请求，再单独做长上下文和并发验收。
 
 ![云端 Strata Monitor 历史快照，非麒麟验收](kylin-v10-offline-assets/cloud-strata-monitor.png)
 
@@ -958,3 +960,297 @@ PY
 恢复前先备份并核验现有 Compose、持久卷、数据库一致性快照、Langfuse 的盐和加密密钥、MinIO、Grafana / Prometheus 卷及目标 private env；**备份须加密并受控**，不可只备份 YAML 后声称可恢复历史数据。Nginx 单文件 bind mount 的配置恢复须保持原 inode，不能以重命名覆盖；实际操作前确认挂载并按目标环境验证。完整断网冷启动、备份和恢复结果应填写 [离线验收模板](offline-acceptance-template.md)，但面板数量以最终 JSON 为准。
 
 尚需提供：麒麟 V10 的具体 SP / Build 和 CPU / GPU 架构、内网模型源 IP / 路径及权限、系统与 NVIDIA 依赖闭包、可交付 Strata 镜像 / runtime / MTP / pack 和其哈希、目标网络与证书、数据保留与权限要求，以及经过脱敏的目标机 Grafana / Langfuse 验收截图。这些缺口补齐前，不应将本手册标记为完整离线交付已通过。
+
+## 附录 A：Strata 启动 JSON、容器参数和主机大页
+
+本附录把云端 `v0.1.45`、CUDA 12、双 A100 的四槽配置和大页操作集中记录，供离线管理员按现场核对。**优先复用目标机已运行的 Strata；仅在现场变更窗口、已备份并确认资源后修改和重启。** 下文 JSON 与容器路径来自云端，麒麟照片中的 `/data/Strata`、`/data/Strata-data` 是另一套宿主目录，不能直接混用。已发布的离线归档是打包时快照，不会自动包含后续更新的附录。
+
+### A.1 使用前检查与备份
+
+在目标机确认是宿主进程还是容器运行，记录准确的 JSON 路径、服务管理方式、镜像、数据目录、业务空闲状态、备份及恢复方法。以下不打印 JSON 或密钥：
+
+```bash
+cat /etc/os-release
+uname -m
+nvidia-smi
+free -h
+ps -C strata -o pid,comm
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+```
+
+确认后设置**现场实际路径**，如果是容器，JSON 路径应为 bind mount 的宿主侧路径；没有配置文件就停下，不创建覆盖。下面拒绝符号链接并备份私有配置，目录权限仅 root 可读：
+
+```bash
+set -euo pipefail
+STRATA_CONFIG=/opt/strata-data/config/strata-iq3_xxs.json  # 必须替换为现场实际文件
+test -f "$STRATA_CONFIG" && test ! -L "$STRATA_CONFIG"
+umask 077
+STRATA_BACKUP=$(mktemp -d /root/strata-config-backup-XXXXXXXX)
+chmod 700 "$STRATA_BACKUP"
+cp -p -- "$STRATA_CONFIG" "$STRATA_BACKUP/strata-iq3_xxs.json"
+printf '配置备份目录：%s\n' "$STRATA_BACKUP"
+```
+
+如果是 Compose 服务，也要将实际使用的每个 Compose 文件、私有 env 文件、运行日志和持久卷 / 数据库按现场备份流程保护好；备份可能包含密钥，不写入仓库和工单。记录已存在的巨大页数量与状态：
+
+```bash
+cat /proc/sys/vm/nr_hugepages > "$STRATA_BACKUP/nr_hugepages.before"
+grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree|HugePages_Total|HugePages_Free|HugePages_Rsvd|Hugepagesize|Hugetlb):' /proc/meminfo > "$STRATA_BACKUP/meminfo.before"
+```
+
+### A.2 完整启动 JSON：云端容器参考值
+
+下列内容是脱敏参考，**不是目标机原配置或可以直接覆盖的密钥**；`api_key` 必须换成私下分配的实际值并确保与 LiteLLM 一致。优先将差异合并进现场已有 JSON，保留未知字段、实际令牌和目标模型路径；先另存候选文件，再验证和变更。
+
+```json
+{
+  "api_key": "REPLACE_WITH_EXISTING_STRATA_API_KEY",
+  "args": [
+    "--pack", "/data/packs/iq3_xxs",
+    "--native", "/models/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00001-of-00002.gguf",
+    "--ple-gguf", "/models/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00002-of-00002.gguf",
+    "--expert-profile", "/opt/strata/data/expert-profile.bin",
+    "--expert-cache", "auto",
+    "--prefill", "8192",
+    "--spec", "4",
+    "--spec-min-p", "0.5",
+    "--mtp", "/data/mtp/rt",
+    "--max-context", "262144",
+    "--kv", "k8v4",
+    "--ple-io", "ram",
+    "--prefill-pipe", "1",
+    "--prompt-cache-every", "8192",
+    "--short-read", "256",
+    "--suffix-draft", "3",
+    "--kv-resident", "32768",
+    "--conversation-cache-mib", "0",
+    "--batch", "4"
+  ],
+  "cuda": 12,
+  "cwd": "/opt/strata",
+  "exe": "/opt/strata/engine-cuda12/strata",
+  "fit_max_tokens": true,
+  "gpu": [0, 1],
+  "gpus_asked": true,
+  "host": "0.0.0.0",
+  "layer_split": "auto",
+  "lib_dirs": ["/usr/local/cuda/bin", "/usr/local/cuda/lib64"],
+  "log": "/opt/strata/strata-iq3_xxs.log",
+  "model_name": "qwen3.8-flash-next-iq3_xxs",
+  "parallel": 4,
+  "port": 8080,
+  "reasoning_budget_tokens": 4096,
+  "reasoning_close_retry": true,
+  "reasoning_effort": "medium",
+  "sampling": {
+    "experimental_speed_projection": true,
+    "temperature": 1.0,
+    "top_k": 20,
+    "top_p": 0.95
+  },
+  "tokenizer": "/data/packs/iq3_xxs/tokenizer",
+  "env": {
+    "MALLOC_MMAP_THRESHOLD_": "16777216",
+    "STRATA_PF_FUSED": "1",
+    "STRATA_ROUTE_TAIL_SKIP": "0"
+  }
+}
+```
+
+| 配置 | 云端验证及迁移要点 |
+| --- | --- |
+| `--native` / `--ple-gguf` | 上例 `/models/文件名` 对应云端将模型目录挂到 `/models`。本手册第 7.1 节另将目标 `IQ3_XXS` 目录挂到 `/models/IQ3_XXS`，应相应改为 `/models/IQ3_XXS/文件名`；若是宿主原生进程，改用现场真实的 `/data/Strata-data/models/IQ3_XXS/文件名`。路径必须对运行进程真实可读。 |
+| `--pack` / `--mtp` / `tokenizer` | 按进程看到的 `/data` 目录填写；宿主安装截图中可能是 `/data/Strata-data/packs/iq3_xxs` 和 `/data/Strata-data/mtp/rt`。pack 内引用的 GGUF 路径也须逐项核对。 |
+| `cwd` / `exe` / `log` / profile | 容器的 `/opt/strata` 与宿主的 `/data/Strata` 不同；目标运行时、profile、CUDA 库和日志路径必须以现场为准。 |
+| `--max-context 262144` / `fit_max_tokens` | 最大上下文是输入与输出共同使用的容量；固定版本在必要时缩小输出预算，不会扩容或修复已超长的输入。 |
+| `parallel: 4` / `--batch 4` | 云端实际为 4 槽，两个值需一致；单次四路测试不代表长期负载通过。 |
+| `--prefill` / `--prefill-pipe` | 云端为固定 `8192` 与 `1`。目标机截图使用 `auto:16384`，不代表现场已经过相同性能验收；更改前应按目标引擎 `--help` 和相同负载测试。 |
+| `--spec` / `--mtp` | 云端 MTP 加载成功，但未启用 `--batch-mtp`；不要将其解释为并发槽已经使用 MTP。目标截图中的 `--mtp-window` 不在云端这份配置中，须单独核查目标二进制支持和含义。 |
+| `--conversation-cache-mib 0` | 关闭独立驻留会话缓存，原先同时设置的 slots、min-tokens、park-gain 因零预算不起作用；普通 prompt checkpoint 不等同于该缓存。 |
+| `--pipeline-windows` / `--prompt-cache-tail` | 云端旧配置中前者被 `--batch` 关闭，后者仅用于单 GPU；参考 JSON 已删除这两项，不应理解为关闭 `--prefill-pipe`。 |
+| `--ple-io ram` / `memlock` | 云端锁页已生效，但消耗了大量可锁定内存。目标机需先核算 RAM、cgroup 和宿主剩余空间，再决定是否开启；不要仅凭 JSON 认定锁页成功。 |
+| `experimental_speed_projection` | 沿用云端默认值；未发现控制向量加载证据，不能据此宣称已加速。 |
+
+在备份后，以下脚本从**现场已有 JSON**生成同目录候选文件：只合并已确认的四槽、上下文和无效参数清理，不重写路径、密钥、采样或其他未知字段；它不自动部署、不重启。若目标引擎版本不同或当前服务不是该 JSON，停止并先核对。`--mtp-window` 等现场其他选项仍需人工按目标二进制单独确认。
+
+```bash
+set -euo pipefail
+STRATA_CONFIG=/opt/strata-data/config/strata-iq3_xxs.json  # 替换为实际文件；与备份时相同
+STRATA_CANDIDATE="${STRATA_CONFIG}.candidate-4slot"
+test -f "$STRATA_CONFIG" && test ! -L "$STRATA_CONFIG"
+test ! -e "$STRATA_CANDIDATE"
+umask 077
+python3 - "$STRATA_CONFIG" "$STRATA_CANDIDATE" <<'PY'
+import json, os, sys
+src, dst = sys.argv[1:]
+with open(src, encoding='utf-8') as f:
+    cfg = json.load(f)
+args = cfg.get('args')
+if not isinstance(args, list) or not all(isinstance(x, str) for x in args):
+    raise SystemExit('args must be an array of strings')
+def remove_pair(flag):
+    if args.count(flag) > 1:
+        raise SystemExit('duplicate flag: ' + flag)
+    if flag in args:
+        i = args.index(flag)
+        if i + 1 >= len(args) or args[i + 1].startswith('--'):
+            raise SystemExit('missing value for: ' + flag)
+        del args[i:i + 2]
+def set_pair(flag, value):
+    remove_pair(flag)
+    args.extend([flag, value])
+for flag in ('--pipeline-windows', '--conversation-cache-slots',
+             '--conversation-cache-min-tokens', '--conversation-cache-park-gain'):
+    remove_pair(flag)
+remove_pair('--slots')  # --slots 与 --batch 是同一槽位数的别名
+if args.count('--prompt-cache-tail') > 1:
+    raise SystemExit('duplicate flag: --prompt-cache-tail')
+if '--prompt-cache-tail' in args:
+    args.remove('--prompt-cache-tail')
+for flag, value in (('--batch', '4'), ('--max-context', '262144'),
+                    ('--conversation-cache-mib', '0')):
+    set_pair(flag, value)
+cfg['parallel'] = 4
+cfg['fit_max_tokens'] = True
+if (isinstance(cfg.get('env'), dict) and '--resident-experts' not in args
+        and '--resident-budget-gib' not in args):
+    cfg['env'].pop('STRATA_RESIDENT_HEADROOM_GIB', None)
+fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, 'w', encoding='utf-8') as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+    f.write('\n')
+print('Candidate generated; key and paths omitted.')
+PY
+python3 -m json.tool "$STRATA_CANDIDATE" > /dev/null
+```
+
+检查目标引擎实际 `--help`、候选文件的参数和路径、密钥与对应 LiteLLM 配置、GPU / RAM 资源和启动日志。**JSON 语法通过不代表路径、参数组合或推理通过。** 确认备份后，按现场配置管理流程将候选内容写入原文件；如果原文件是单文件 bind mount，必须保持原 inode，例如在确认路径正确后使用 `cat "$STRATA_CANDIDATE" > "$STRATA_CONFIG"`，不能用重命名替换挂载文件。应用后按实际 systemd / Docker 服务方式在维护窗口重启；没有现场变更窗口则保持候选文件不应用。
+
+### A.3 Docker Compose 的 Strata 参数
+
+**仅限决定迁移 / 新建容器且目标兼容时使用**；原生宿主 Strata 不需要为了 memlock 创建第二个容器。下方是完整独立 Compose 示例，不修改第 7 节现有网关 Compose；LiteLLM 必须与该容器接入同一 Docker 网络，不能假设不同 Compose 项目默认网络相同。镜像与 `/data` runtime、模型文件必须已在离线环境存在；该示例本身不提供镜像或权重。
+
+```yaml
+services:
+  strata:
+    image: local/strata:0.1.45-cuda12
+    restart: unless-stopped
+    environment:
+      FAMILY: qwen
+      MODEL: IQ3_XXS
+      CONTEXT: "262144"
+      VISION: "no"
+      LOW_RAM: "off"
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      STRATA_CUDA: "12"
+      GGUF_DIR: /models
+      API_KEY: ${STRATA_API_KEY:?set in a private env file}
+      STRATA_API_KEY: ${STRATA_API_KEY:?set in a private env file}
+    volumes:
+      - ${STRATA_DATA_DIR:?set the existing data directory}:/data
+      - ${STRATA_MODEL_DIR:?set the existing model directory}:/models:ro
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+该示例的 `STRATA_MODEL_DIR` 应指向直接包含两片 GGUF 的宿主目录。若选择第 7.1 节的 `/models/IQ3_XXS` 挂载，须同步更改 `GGUF_DIR` 和 JSON 分片路径。示例没有发布宿主端口；需要被网关访问时按现场网络加入 backend，不应为方便直接公开模型端口。`API_KEY` 用于首次 setup，`STRATA_API_KEY` 供服务鉴权，均从现场私有环境读取；已有 JSON 和各调用方的实际认证必须一致，不要输出完整 Compose 展开结果。若未设置新服务的私有环境和完整 runtime，entrypoint 可能尝试 setup 或下载；断网迁移应事先验证所需文件齐全。
+
+如果现有容器已由 Compose 管理，备份其全部 Compose / env 文件后，**只在现有 `strata` 服务内合并** `ulimits.memlock`，不要另建同名服务或覆盖其镜像、挂载和网络；`-1` 表示无限制，需先确认宿主与 cgroup 内存余量。典型校验 / 重建命令如下，文件名、项目名及 Compose 程序必须换为现场实际值；`up` 会中断该服务并重新加载模型：
+
+```bash
+cd /实际/Compose/目录
+docker compose -p llm-a100 -f docker-compose.yml -f docker-compose.cloud.yml config --quiet
+docker compose -p llm-a100 -f docker-compose.yml -f docker-compose.cloud.yml \
+  up -d --no-build --pull never --no-deps --force-recreate strata
+docker inspect llm-a100-strata-1 --format '{{.State.Status}} {{json .HostConfig.Ulimits}}'
+```
+
+上述使用插件形式的 `docker compose`；如果现场只有主包的独立 Compose 二进制，必须将每行 `docker compose` 替换成该二进制的绝对路径。`--pull never` 阻止拉取镜像；第 7.1 节的 `docker run --ulimit memlock=-1:-1` 是另一种启动方式，不要与 Compose 同时启动同一模型。配置文件、容器重启和数据回滚分别按备份记录执行。
+
+### A.4 麒麟 V10 主机 HugeTLB 大页
+
+Linux 大页池属于**宿主机**内存设置；`MALLOC_MMAP_THRESHOLD_` 是分配器参数，`ulimits.memlock` 是锁页上限，三者不是同一项。固定版本 Strata 的 CPU expert arena 尝试 2 MiB `MAP_HUGETLB`；失败时回退普通页，并可能请求透明大页。大页不会增加 GPU 显存和上下文容量。预留池会减少可供普通内存使用的余量，NUMA、cgroup 和其他业务也会影响能否申请；不能保证性能提升。
+
+截图曾设置 `20480` 页，若 `Hugepagesize` 是 `2048 kB` 则相当于 **40 GiB**；截图中池当时全部空闲，之后 4 MiB 测试成功也不能证明 Strata 实际使用。截图内网机器的约 565 GiB 内存与云服务器不同：云服务器启用 PLE 锁页后，曾仅剩约 1.1 GiB 可用内存、已用 swap 约 1.25 GiB，**不能直接在那里照搬 40 GiB 大页池**。按目标机进程实际所需页数、NUMA、负载和足够内存余量确定值；此处不是建议所有主机设 20480。
+
+先检查当前状态，确认没有其他进程依赖池；同时检查目标容器的 HugeTLB cgroup 配额。不同麒麟内核及 cgroup 版本的路径可能不同：
+
+```bash
+grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree|HugePages_Total|HugePages_Free|HugePages_Rsvd|Hugepagesize|Hugetlb):' /proc/meminfo
+cat /proc/sys/vm/nr_hugepages
+cat /sys/kernel/mm/transparent_hugepage/enabled
+for node in /sys/devices/system/node/node*/hugepages/hugepages-2048kB; do
+  [ -d "$node" ] || continue
+  printf '%s total=' "$node"; cat "$node/nr_hugepages"
+  printf '%s free=' "$node"; cat "$node/free_hugepages"
+done
+```
+
+若评估后决定临时申请池，以下 `HUGE_TOTAL` 是**全机目标总页数，不是新增数量**；示例 20480 必须按实测改写。需要 root；内核可能因内存碎片或 NUMA 分配而未能满足目标，必须读回核对。此步骤不重启进程，已有 Strata 不会因此自动切换其已分配的内存：
+
+```bash
+set -euo pipefail
+HUGE_TOTAL=20480  # 仅示例；按现场 2 MiB 页与预算确定
+test "$(awk '/^Hugepagesize:/ {print $2}' /proc/meminfo)" = 2048
+CURRENT_HUGE=$(cat /proc/sys/vm/nr_hugepages)
+test "$HUGE_TOTAL" -ge "$CURRENT_HUGE" || { echo '目标小于现有池，停止并检查其他业务'; exit 1; }
+printf '%s\n' "$HUGE_TOTAL" > /proc/sys/vm/nr_hugepages
+ACTUAL_HUGE=$(cat /proc/sys/vm/nr_hugepages)
+printf 'requested=%s actual=%s\n' "$HUGE_TOTAL" "$ACTUAL_HUGE"
+test "$ACTUAL_HUGE" -eq "$HUGE_TOTAL" || { echo '未达到请求值，检查碎片、NUMA 和内存'; exit 1; }
+grep -E '^(MemAvailable|SwapFree|HugePages_Total|HugePages_Free|HugePages_Rsvd|Hugepagesize|Hugetlb):' /proc/meminfo
+```
+
+临时写入通常不会跨主机重启保留。只有现场确认要持久化，并检查 `/etc/sysctl.d/`、`/etc/sysctl.conf` 不存在冲突配置后，才创建专用文件；以下不覆盖同名已有文件，`HUGE_TOTAL` 必须是上一步已核验的值：
+
+```bash
+set -euo pipefail
+test -n "${HUGE_TOTAL:-}"
+PERSIST_FILE=/etc/sysctl.d/90-strata-hugepages.conf
+test ! -e "$PERSIST_FILE" || { echo '配置文件已存在，请先备份并人工合并'; exit 1; }
+(umask 022; printf 'vm.nr_hugepages = %s\n' "$HUGE_TOTAL" > "$PERSIST_FILE")
+sysctl -p "$PERSIST_FILE"
+cat /proc/sys/vm/nr_hugepages
+```
+
+记录本次新建文件及原值，重启后重新核对，不能把写入文件当作持久化验收；后续其他 sysctl 文件也可能覆盖它。内核是否能在开机后分配足量大页仍需读取实际值。
+
+需要让现有引擎使用新池时，应在维护窗口按服务实际方式重启并等待模型完全加载；不要在加载期间反复重启。验证时区分**池使用量**和**该进程使用量**：
+
+```bash
+pgrep -a -x strata  # 若有多个进程，现场选择需要核查的 PID
+STRATA_PID='<实际引擎PID>'
+grep -E '^(HugetlbPages|VmLck|VmRSS|VmSwap):' "/proc/$STRATA_PID/status"
+grep -E '^(HugePages_Total|HugePages_Free|HugePages_Rsvd|Hugepagesize|Hugetlb|MemAvailable|SwapFree):' /proc/meminfo
+grep -iE 'hugetlb 2 MB pages|MAP_HUGETLB unavailable|transparent huge pages|expert arena|PLE table (locked in RAM|loaded \(not locked\))' \
+  /实际/strata-iq3_xxs.log
+```
+
+`HugetlbPages` 或 `hugetlb 2 MB pages` 结合本次启动记录可说明进程使用大页；池的 `Total - Free` 还可能包含其他进程，不能单独归因。`PLE table locked in RAM` 与 `VmLck` 是锁页证据，不是大页证据。没有字段或日志时按目标内核 / 版本进一步检查 `/proc/<pid>/smaps`、容器 cgroup 和 NUMA；不要因为 4 MiB 测试成功就声称 Strata 已使用。按相同输入、并发、冷 / 热缓存和模型版本测 TTFT、TPOT、吞吐、内存、swap 与错误率。
+
+如需回滚，先检查其他使用者及现有池使用情况，恢复受控 sysctl 配置，并参考本次备份中的 `nr_hugepages.before` 在维护窗口恢复原目标页数：
+
+```bash
+test -f "$STRATA_BACKUP/nr_hugepages.before"
+ORIGINAL_HUGE=$(cat "$STRATA_BACKUP/nr_hugepages.before")
+printf '%s\n' "$ORIGINAL_HUGE" > /proc/sys/vm/nr_hugepages
+cat /proc/sys/vm/nr_hugepages
+```
+
+如果上面持久化步骤是本次新建的 `/etc/sysctl.d/90-strata-hugepages.conf`，且管理员已确认它之后未被其他业务修改，应删除该文件或按现场备份恢复原文件，以免下次开机重新设置；只恢复运行时值而保留该文件并不构成完整回滚。有在用大页时，释放和池收缩的表现取决于内核与映射状态，必须读回并检查相关进程；不要通过强制终止其他业务释放大页。回滚 JSON / Compose 前先确认备份之后没有需保留的改动，再按 A.1 的备份恢复并重新验证模型、实际认证及观测链路。
+
+### A.5 实际启动与验收记录
+
+容器启动后等待 `/health` 的 `loaded=true`，核对实际模型、`max_context`、`parallel`、槽位数、KV 类型和驻留值；按第 11 / 12 节分别完成 Nginx → LiteLLM → Strata 的非流式、流式及 Langfuse 对应 Trace，检查 Prometheus / Grafana 的新样本。健康接口和语法校验不能替代推理及链路验证。
+
+云端 2026-11-16 的结果：`loaded=true`、上下文 262144、4 槽，MTP draft 已加载；PLE 日志显示 locked、引擎 `VmLck=28,125,136 KiB`；经 Nginx 的流式和非流式短请求均返回 `42`，两条 Generation 在 Langfuse 存储中找到。这是云端一次短请求结果，不是麒麟、大页性能或长时间并发验收；目标机应在验收表填写实测时间、池和进程数值、RAM / swap、模型答案、usage、Trace、Grafana 样本及回滚结果。

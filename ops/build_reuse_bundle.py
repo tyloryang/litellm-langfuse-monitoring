@@ -140,6 +140,7 @@ def main():
         'offline-release-20261116.md', 'offline-monitoring-addon-20261116.md',
         'cloud-strata-262k-tuning-20261116.md', 'cloud-strata-cpa-access-20261116.md',
         'cloud-real-inference-20261116.md', 'cloud-strata-json-log-audit-20261116.md',
+        'cloud-strata-memlock-deployment-20261116.md',
         'grafana-formulas.md', 'offline-acceptance-template.md',
     ]
     package_doc = ROOT / 'docs/kylin-v10-package-preparation.md'
@@ -152,6 +153,8 @@ def main():
             files.append(('manual/docs/kylin-v10-offline-assets/' + image.name, image))
     for rel in ('nginx/nginx.conf', 'litellm/config.yaml', 'litellm/token_router_config.yaml',
                 'deploy/cloud-monitoring/strata-proxy.conf', 'ops/adapt_monitoring_existing_strata.py',
+                'deploy/strata/docker-compose.example.yml',
+                'examples/strata-iq3_xxs-cloud-4slot.example.json',
                 'ops/kylin-target-inventory.sh', 'ops/kylin-download-rpms.sh',
                 'ops/kylin-rpm-offline-check.sh', 'ops/kylin-verify-nvidia-metadata.py'):
         files.append(('manual/' + rel, ROOT / rel))
