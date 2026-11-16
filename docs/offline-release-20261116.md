@@ -9,7 +9,9 @@
 | `nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part01` 至 `part04` | 同一个 gzip 压缩包的四段，必须全部下载 |
 | `SHA256SUMS` | 四个分卷、合并后的 gzip 和解压后的 tar 的 SHA-256 |
 | `manifest.json` | 各分卷大小、SHA-256、gzip 和原始 tar 信息 |
-| `source-and-docs.tar.gz` | 本次发布时的仓库源码与最新迁移手册，包含登录页截图和自动路由、Grafana 说明；不同于主包内的较早源码快照 |
+| `source-and-docs.tar.gz` | 原发布时的仓库源码和迁移手册；不同于主包内的较早源码快照 |
+| `source-and-docs-20261116-validated.tar.gz` | 真实推理及工具链验收后的源码和手册快照，Git 提交 `12f70a0`；实际云端补充说明以本附件或仓库更新版本为准 |
+| `VALIDATED-SHA256SUMS` | 更新版源码手册附件的独立 SHA-256，不改变原四分卷及其校验文件 |
 
 在具备 `sha256sum` 的 Linux 准备机上恢复并核验：
 
@@ -17,6 +19,7 @@
 cd /path/to/downloads
 # 完整下载四段后，先核对每一段。
 grep '\.part0[1-4]$' SHA256SUMS | sha256sum -c -
+sha256sum -c VALIDATED-SHA256SUMS
 cat nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part01 \
     nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part02 \
     nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz.part03 \
