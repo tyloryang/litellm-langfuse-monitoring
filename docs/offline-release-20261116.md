@@ -98,8 +98,8 @@ COMPOSE=/path/to/nginx-litellm-langfuse/host/compose/docker-compose
 | 包文件 | 云端及 Windows 本地 v3 归档 SHA-256 一致；包内 `sha256sum -c` 通过；9 镜像在云机执行过 `docker load` | 分卷下载后应重新核对每卷和整包；目标机需重新导入 |
 | 容器启动 | CentOS 7.9 / Docker 20.10.17、Compose 2.29.7 的云机上启动网关、Langfuse 与存储容器 | 不是麒麟 V10 目标冷启动验收 |
 | 隔离请求 | 同一云机独立 Docker `internal=true` 网络、`--pull never --no-build`，mock 请求 HTTP 200，ClickHouse `events_full` 出现 `chat offline-mock` | mock 上游不证明真实模型、Token、工具链或吞吐；Docker 20 的 internal 网络测试通过容器内部 IP 访问 |
-| 实际推理 | Strata 0.1.45 CUDA 12 镜像编译完成，容器内识别两张 A100 | 截至本记录模型仍在下载；真实加载、流式 / 非流式响应和对应 Trace 待验收 |
-| 浏览器 | 已有同一 Langfuse 容器的登录页面截图 | 截图未证明已登录后的 Trace 页面和工具链展示 |
+| 实际推理 | 云端两片模型校验通过；双 A100 的 Strata 已加载，Nginx 入口非流式 / 流式请求均返回正确结果，并在 Langfuse 找到对应 Generation，见[真实推理记录](cloud-real-inference-20261116.md) | 这是联网云机的短请求验证，不是离线目标机验收；未验证四档真实路由、长上下文或并发性能 |
+| 浏览器 | 同一云端 Langfuse 的 Tracing 页面显示两条真实测试 Generation，并可打开流式请求详情 | 未验证真实业务的 Agent / Tool 父子链 |
 | 麒麟 V10 | 已列出需要按 SP / Build 准备的系统物料和验收步骤 | 尚无目标机完整依赖、断网冷安装、重启、持久化或恢复验收记录 |
 
 正式交付前，按 [麒麟离线部署基线](offline-deployment-baseline.md) 和 [验收模板](offline-acceptance-template.md) 在目标同版本干净机器上阻断互联网，完成安装、镜像导入、服务健康、真实流式 / 非流式推理、Langfuse Trace / 工具链、来源 IP、监控和路由验证、重启及备份恢复。将每项命令、实际结果、失败原因和证据留档；云端 mock 演练不能替代上述目标机验收。
