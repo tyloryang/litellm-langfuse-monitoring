@@ -146,3 +146,19 @@ flowchart LR
 - 云端双 A100：Strata 实际加载；经 Nginx / LiteLLM 的流式和非流式推理返回正确答案，并在 Langfuse 存储中查到 Generation。工具链曾以客户端真实执行示例验证。详见 [云端真实推理记录](docs/cloud-real-inference-20261116.md)及[锁页后验证](docs/cloud-strata-memlock-deployment-20261116.md)。
 - WSL：已有环境验证过真实推理、Trace、来源 IP 和 Grafana；Prometheus 2.45.1 / Grafana 10.1.5 的兼容试验有独立数据与限制，不能代表目标机全部指标均已验收。
 - 麒麟 V10：目标机已有服务和硬件照片可供核对；具体 SP / Build、离线依赖闭包、断网冷启动、真实请求、监控及备份恢复仍需现场执行并记录。[离线验收模板](docs/offline-acceptance-template.md)可用于记录结果。
+
+## 部署中遇到的问题
+
+以下根据实际部署整理；服务器地址和端口以目标环境为准，完整命令见[脱敏版离线手动部署文档](离线手动部署文档.md)。
+
+| 现象 | 原因和处理 |
+| --- | --- |
+| Dockerfile 报 `unknown instruction: IMPORT` | 旧版构建器无法解析 Dockerfile 的 heredoc。使用 `DOCKER_BUILDKIT=1` 构建；同时确认 Docker/BuildKit 版本。 |
+| CUDA 基础镜像 `failed size validation` | 镜像层传输中断导致数据不完整。检查网络和磁盘，保留已完成的镜像层，从可信源重试；也可在准备机校验后导出并离线导入镜像。 |
+| 首次启动 Strata 后容器显示 `unhealthy` | 模型 pack、tokenizer 和 MTP 下载或打包期间服务尚未监听。结合日志、重启次数和 OOM 状态确认进度，待 `/health` 返回 `loaded: true` 后再验收。 |
+| 断网环境无法完成 Strata 首次启动 | GGUF 之外还需要匹配版本的镜像、MTP 和运行数据。提前在兼容环境准备物料，并在目标机执行断网冷启动验证。 |
+| Strata 内存占用超出预期 | 安装过程可能依据磁盘类型自动加入 `--ple-io ram`。检查生成配置、可用内存和锁页，再按存储性能及容量决定是否调整。 |
+| LiteLLM 调用模型返回 401 | 分别核对客户端的 LiteLLM master key 与上游模型的 API key；项目中的 `STRATA_API_KEY` 是模型配置引用的自定义变量，更新后需重建 LiteLLM。 |
+| Langfuse 停在 `Waiting for first trace` | 确认项目公私钥、项目和自定义回调一致，再通过 LiteLLM 发起真实模型请求；直连 Strata 不会触发 LiteLLM 的回调。 |
+| Grafana 已启动但没有数据 | 检查 Prometheus targets、采集地址、token 和实际流量；模型服务或网关密钥轮换后，需要同步监控侧密钥。 |
+| Grafana 与已有服务端口冲突 | 先用 `ss -ltnp` 核对实际绑定，修改独立监控代理的宿主端口及公网映射，不覆盖已有服务。 |
