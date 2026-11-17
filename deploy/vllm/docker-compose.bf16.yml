@@ -1,0 +1,42 @@
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.24.0-cu129
+    restart: "no"
+    ipc: host
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      VLLM_NO_USAGE_STATS: "1"
+      VLLM_API_KEY: "${VLLM_API_KEY:?Set VLLM_API_KEY in the private env file}"
+    ports:
+      - "${VLLM_BIND_IP:-127.0.0.1}:${VLLM_PORT:-8000}:8000"
+    volumes:
+      - "${VLLM_MODEL_DIR:-/data/qwen-vllm/models/Qwen3.6-27B}:/models/Qwen3.6-27B:ro"
+      # Optional persistent Hugging Face cache. Create the host directory first.
+      # - "${VLLM_CACHE_DIR:-/data/qwen-vllm/cache}:/root/.cache/huggingface"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - /models/Qwen3.6-27B
+      - --served-model-name
+      - qwen3.6-27b
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --tensor-parallel-size
+      - "2"
+      - --dtype
+      - bfloat16
+      - --max-model-len
+      - "8192"
+      - --gpu-memory-utilization
+      - "0.90"
+      - --language-model-only
+      - --reasoning-parser
+      - qwen3
