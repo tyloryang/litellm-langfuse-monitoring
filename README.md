@@ -145,7 +145,7 @@ flowchart LR
 
 - 云端双 A100：Strata 实际加载；经 Nginx / LiteLLM 的流式和非流式推理返回正确答案，并在 Langfuse 存储中查到 Generation。工具链曾以客户端真实执行示例验证。详见 [云端真实推理记录](docs/cloud-real-inference-20261116.md)及[锁页后验证](docs/cloud-strata-memlock-deployment-20261116.md)。
 - WSL：已有环境验证过真实推理、Trace、来源 IP 和 Grafana；Prometheus 2.45.1 / Grafana 10.1.5 的兼容试验有独立数据与限制，不能代表目标机全部指标均已验收。
-- 麒麟 V10：目标机已有服务和硬件照片可供核对；具体 SP / Build、离线依赖闭包、断网冷启动、真实请求、监控及备份恢复仍需现场执行并记录。[离线验收模板](docs/offline-acceptance-template.md)可用于记录结果。
+- 麒麟 V10：目标机已有服务可供核对，硬件信息见离线部署手册中的文字记录；具体 SP / Build、离线依赖闭包、断网冷启动、真实请求、监控及备份恢复仍需现场执行并记录。[离线验收模板](docs/offline-acceptance-template.md)可用于记录结果。
 
 ## 部署中遇到的问题
 
