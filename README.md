@@ -2,6 +2,8 @@
 
 本项目把 **Nginx、LiteLLM、Langfuse、Prometheus、Grafana 和 Strata** 组合成一条可部署、可追踪、可监控的大模型调用链。它面向已有 GPU 推理服务和内网离线环境：客户端走统一网关，运维可以查看单次请求的 Trace，也可以从看板观察 Token、延迟、GPU 和来源用量。
 
+部署操作与排障见 [脱敏版离线手动部署文档](离线手动部署文档.md)，涵盖网关、Strata、Langfuse Trace、Grafana 和离线物料准备；文中地址均为示例，目标环境仍需单独验收。
+
 项目中的回调、来源 IP 账本、Strata 补充导出器和看板是针对原有组件的适配；Langfuse 本身仍负责 Trace、Session、User 和 Metadata 等能力。业务 Agent 的真实工具执行节点需要客户端在执行位置埋点，模型返回 `tool_calls` 本身不代表工具已运行。
 
 > 运维从这里开始：[离线部署 README：包目录、配置和启动](docs/offline-deployment-README.md) · [逐步操作命令](docs/kylin-v10-offline-operations-step-by-step.md) · [下载离线包](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-reuse-amd64-20261116) · [完整离线手册](docs/kylin-v10-full-offline-deployment-20261116.md) · [Grafana 公式](docs/grafana-formulas.md)
