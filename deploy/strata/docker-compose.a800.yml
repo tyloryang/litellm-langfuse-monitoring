@@ -1,0 +1,43 @@
+# CentOS 7 / Docker 20.10 deployment for two NVIDIA A800 (sm_80) GPUs.
+# Build local/strata:0.1.45-cuda12 from source/strata before starting.
+services:
+  strata:
+    image: local/strata:0.1.45-cuda12
+    restart: unless-stopped
+    environment:
+      FAMILY: qwen
+      MODEL: IQ3_XXS
+      CONTEXT: "${STRATA_CONTEXT:-32768}"
+      VISION: "no"
+      LOW_RAM: "off"
+      GPUS: "all"
+      KV: "k8v4"
+      HOST: "0.0.0.0"
+      PORT: "${STRATA_PORT:-8008}"
+      STRATA_CUDA: "12"
+      STRATA_SOURCE: modelscope
+      GGUF_DIR: /models
+      API_KEY: "${STRATA_API_KEY:?Set STRATA_API_KEY in a private .env file}"
+      STRATA_API_KEY: "${STRATA_API_KEY:?Set STRATA_API_KEY in a private .env file}"
+    ports:
+      - "${STRATA_BIND_IP:-192.0.2.10}:${STRATA_PORT:-8008}:${STRATA_PORT:-8008}"
+    volumes:
+      - "${STRATA_DATA_DIR:-/data/qwen-strata/Strata-data}:/data"
+      - "${STRATA_MODEL_DIR:-/data/qwen-strata/Strata/models/IQ3_XXS}:/models:ro"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    stop_grace_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "3"

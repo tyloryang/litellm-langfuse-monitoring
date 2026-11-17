@@ -10,6 +10,7 @@
 
 - [双 A100、262144 上下文、4 槽 JSON 模板](../../examples/strata-iq3_xxs-cloud-4slot.example.json)：`api_key` 是占位符。将配置合并进目标已有文件时应保留原密钥与其他现场字段，路径需按挂载修改。
 - [独立 Compose 示例](docker-compose.example.yml)：复用已有 `/data` pack、MTP 和 `/models` 模型分片，密钥使用私有环境变量传入；要接入 LiteLLM，需与网关加入同一个 Docker 网络。示例中同时设置 `API_KEY` 和 `STRATA_API_KEY`，前者供首次 setup，后者供服务鉴权；应与客户端配置一致。
+- [双 A800 现场 Compose](docker-compose.a800.yml)：用于 CentOS 7 / Docker 20.10 示例服务器，默认发布到文档保留地址 `192.0.2.10:8008`；部署前必须改成目标宿主的实际绑定地址。首次启动复用现有 IQ3_XXS 分片并生成 pack、tokenizer 和 MTP。先复制 [现场环境变量模板](a800.env.example) 为服务器端 `.env`，在服务器本地生成密钥；不要把真实 `.env` 加入仓库或交付包。
 - [云端变更、锁页、调用链验证和回滚](../../docs/cloud-strata-memlock-deployment-20261116.md)。
 - [完整离线部署与复用入口](../../docs/kylin-v10-reuse-offline-bundle-20261116.md)。
 
@@ -27,6 +28,8 @@ docker build -f source/strata/Dockerfile.cuda12 \
 `80` 对应本例 A100 架构，其他 GPU 需按目标架构和 CUDA 编译器重新选择。Dockerfile 包含基础镜像、系统包、Python 依赖和 llama.cpp 获取步骤，上述构建需要事先准备这些依赖或联网；**源码快照本身不是完整离线构建包**。目标麒麟 V10 的驱动、容器运行时、既有模型和 pack 仍须分别核对，不能将云端通过结果视为麒麟验收。
 
 Compose 示例仅展示 Strata 组件，不自动发布端口。准备好私有配置及挂载路径后，在测试环境执行 `docker compose -f deploy/strata/docker-compose.example.yml config --quiet` 校验；启动和接入应遵循目标环境的网络和认证配置。锁页会显著占用不可回收内存：云端启用后可用内存曾降至约 1.1 GiB，部署前需评估资源并在启动后检查日志及 `VmLck`。
+
+本次双 A800 服务器使用 `docker-compose.a800.yml`，不使用上一段不发布端口的通用示例。现场版首装默认 32K 上下文用于短请求冒烟；确认模型、双卡、认证和 LiteLLM 调用链后，再把 `.env` 的 `STRATA_CONTEXT` 调到 `262144` 并以 `REINSTALL=1` 重建运行配置。不要在首装时加入 `--ple-io ram` 或四槽批处理参数。
 
 ## Linux 大页与锁页
 
