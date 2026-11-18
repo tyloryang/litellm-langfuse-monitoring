@@ -83,7 +83,7 @@ COMPOSE=/path/to/nginx-litellm-langfuse/host/compose/docker-compose
 
 当前 classifier 对消息使用 `gpt-4o-mini` 的 LiteLLM tokenizer，失败时回退到字符数估算，并固定预留 1024 输出 token；它不是 Qwen tokenizer，也不是按每次请求的 `max_tokens` 精确预留。以输入估计加 1024 选择首个能容纳的 32768 / 65536 / 131072 / 262144 档；超限则插件返回最高档，由 LiteLLM 的上下文检查 / escalation 和后端实际限制处理。多模态、工具参数、请求输出上限和实际模型 context window 应在迁移时针对业务模型校准，不能只按配置中的档位宣称不会溢出。
 
-容器化接入时，需要一起部署 `token_router_config.yaml`、`context_tier_classifier.py`、`token_router.py`、`routing_decision_log.py` 和 `observability_callback.py`，并确认 LiteLLM loader 可导入这些文件。`routing_decision_log.py` 当前日志目录硬编码为本机 WSL 路径，需改成目标容器可写的挂载路径；该 JSONL 记录内容预览和摘要，应按现场数据策略决定是否启用。四个模型的上游地址、可用上下文和鉴权必须替换为真实后端；候选包未包含四个真实模型。
+容器化接入时，需要一起部署 `token_router_config.yaml`、`context_tier_classifier.py`、`token_router.py`、`routing_decision_log.py` 和 `observability_callback.py`，并确认 LiteLLM loader 可导入这些文件。`routing_decision_log.py` 默认把决策日志写到仓库 `.runtime/token-router-decisions.jsonl`；容器里请把 `TOKEN_ROUTER_DECISION_LOG` 指到可写挂载。该 JSONL 记录内容预览和摘要，应按现场数据策略决定是否启用。四个模型的上游地址、可用上下文和鉴权必须替换为真实后端；候选包未包含四个真实模型。
 
 启发式分数 `Σ(维度分 × 权重)` 及其信号只作为解释信息，当前配置中选模由上下文档位决定。Langfuse 可查看 `routed_model`、`context_tier`、`heuristic_tier`、`heuristic_score`、`weight_details`，是否可筛选取决于目标 Langfuse 版本和字段索引；不要把启发式分数描述成请求分流权重。迁移验收要用短请求、各边界附近请求、超过最大窗口的请求分别核对实际上游模型、usage 和 Trace；不能用 mock 结果替代真实路由验收。
 

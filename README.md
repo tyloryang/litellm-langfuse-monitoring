@@ -4,6 +4,19 @@
 
 部署操作与排障见 [脱敏版离线手动部署文档](离线手动部署文档.md)，涵盖网关、Strata、Langfuse Trace、Grafana 和离线物料准备；文中地址均为示例，目标环境仍需单独验收。
 
+文档和配置里的地址、路径需要换成自己的环境：
+
+| 占位 | 含义 |
+| --- | --- |
+| `203.0.113.30` | 文档专用公网地址（RFC 5737），代替原云端服务器公网 IP。URL、SSH 和 curl 示例里出现它时，换成自己的服务器公网 IP。 |
+| `203.0.113.10`、`192.0.2.10`、`198.51.100.0/24` | 同样是文档专用地址，分别表示示例公网入口、示例宿主网卡和示例来源地址，不是现网地址。 |
+| `YOUR_USER` | 本机用户名占位，例如 `/home/YOUR_USER/...`。 |
+| `YOUR_PROJECT` | 本机检出本仓库的目录名占位。 |
+| `YOUR_CLIENT_PROJECT` | 调用方本地项目目录名占位。 |
+| `YOUR_MODEL_DIR` | 模型数据目录名占位。 |
+
+`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`127.0.0.0/8` 和 `0.0.0.0` 是内网、回环或通配监听地址，按原样保留。密钥类字段在示例里仍是 `REPLACE`，不要把真实口令写回仓库。
+
 项目中的回调、来源 IP 账本、Strata 补充导出器和看板是针对原有组件的适配；Langfuse 本身仍负责 Trace、Session、User 和 Metadata 等能力。业务 Agent 的真实工具执行节点需要客户端在执行位置埋点，模型返回 `tool_calls` 本身不代表工具已运行。
 
 > 运维从这里开始：[离线部署 README：包目录、配置和启动](docs/offline-deployment-README.md) · [逐步操作命令](docs/kylin-v10-offline-operations-step-by-step.md) · [下载离线包](https://github.com/tyloryang/litellm-langfuse-monitoring/releases/tag/offline-reuse-amd64-20261116) · [完整离线手册](docs/kylin-v10-full-offline-deployment-20261116.md) · [Grafana 公式](docs/grafana-formulas.md)

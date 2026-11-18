@@ -6,12 +6,18 @@ weighted score: each dimension score multiplied by its configured weight.
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 from litellm.integrations.custom_logger import CustomLogger
 
-LOG = Path("/mnt/e/project/YOUR_PROJECT/litellm-langfuse-monitoring/.runtime/token-router-decisions.jsonl")
+# Default stays inside this checkout. Override when the process cannot write
+# next to the source tree, for example inside a container.
+LOG = Path(os.environ.get(
+    "TOKEN_ROUTER_DECISION_LOG",
+    Path(__file__).resolve().parent.parent / ".runtime" / "token-router-decisions.jsonl",
+))
 _SCORER = None
 
 
