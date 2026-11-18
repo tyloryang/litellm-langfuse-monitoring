@@ -37,7 +37,7 @@
 | 云端接口检查 | 部署方反馈：服务器内部 `https://127.0.0.1:8444/api/public/health` 返回 HTTP 200；带项目凭据访问 `/api/public/projects` 返回 HTTP 200；经 Nginx 访问 LiteLLM `/v1/models` 返回 HTTP 200 并列出 `qwen-strata`。这证明接口及模型别名可访问，不能证明模型已加载或推理成功 |
 | 外网访问 | 部署方反馈，本机访问 `https://203.0.113.30:13258/health/liveliness`、`https://203.0.113.30:13259/api/public/health` 和 `https://203.0.113.30:13262/minio/health/live` 均返回 HTTP 200，使用自签名证书。历史 SSH 隧道端口配置已变化，不再作为当前访问入口 |
 | 离线模拟 | 部署方反馈，同一云主机的独立 Compose 项目使用 Docker internal 网络及本地镜像启动服务；模拟请求经网关返回 HTTP 200，隔离 ClickHouse 有对应事件。范围及限制见第 6.1 节 |
-| 离线候选包 | `/opt/llm-observability-deploy/offline/nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar`，约 5.4 GiB；服务器和本机副本的 SHA-256 均为 `627e4b44ba9fcf4da8a7f9f3d1227348815ca021d153c978236758ced206b702`。部署方报告包内 19 项校验通过，九镜像导入通过；物料范围与验收限制见第 6.1 节 |
+| 离线候选包 | `/opt/llm-observability-deploy/offline/nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar`，约 5.4 GiB；服务器和本机副本的 SHA-256 均为 `627e4b44ba9fcf4da8a7f9f3d1227348815ca021d153c978236758ced206b702`。这是当时云端副本的记录；重新发布的候选包原始 tar 摘要是 `6a6a397a70bfb8bdca4230eabf005fdfa1fa1e2090b917d9e5bede7d72a748cb`。部署方报告包内 19 项校验通过，九镜像导入通过；物料范围与验收限制见第 6.1 节 |
 | Windows 浏览器 | 2026-11-16 在 Chrome 实际打开公网 HTTPS 地址，返回 `net::ERR_CERT_AUTHORITY_INVALID`。随后通过用户提供的临时本地 SSH 隧道 `http://127.0.0.1:18031/` 观察到 Langfuse 登录页；按部署方说明，该隧道直达同一云端 Langfuse Web 容器 3000 端口。公网自签名证书仍需用户自行信任或处理 |
 
 部署方提供的当前端口映射如下。云主机端口和公网端口是不同层次，访问控制、证书、地址配置仍需按现场检查；其他端口暂未分配。

@@ -44,7 +44,7 @@ flowchart LR
 
 | 物料 | 当前证据与缺口 |
 | --- | --- |
-| 主离线候选包 | linux/amd64，原始 tar **5,714,677,760 字节**，9 个 Nginx、LiteLLM、Langfuse 及存储镜像；包含 Compose v2.29.7。独立资产审计报告分卷、合并 gzip / tar 校验通过 |
+| 主离线候选包 | linux/amd64，原始 tar **5,714,739,200 字节**，9 个 Nginx、LiteLLM、Langfuse 及存储镜像；包含 Compose v2.29.7。分卷、合并 gzip / tar 的校验值以重新发布的 `SHA256SUMS` 为准 |
 | 监控扩展包 | `monitoring-amd64-20261116.tar`，**202,598,400 字节**；Prometheus 2.45.1、Grafana 10.1.5。审计报告 SHA 通过；独立于主包 |
 | 源码与修复 | `source-and-docs-20261116-validated.tar.gz` 有独立校验；**已发布监控包早于本次 TTFT 修复**，须另外携带最终检查过的 dashboard / 公式文件 |
 | 系统组件 | 主包仅有三个 CentOS 7 候选 RPM（Docker CE / CLI、containerd）；不是麒麟 V10 依赖闭包，NVIDIA 驱动和 Container Toolkit 也不在主包内 |
@@ -91,7 +91,7 @@ gzip -dc nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz > ngi
 tr -d '\r' < SHA256SUMS | grep 'candidate-20261116-v3\.tar$' | sha256sum -c -
 ```
 
-主包合并 gzip 的历史摘要为 `18d0c72ba47b918951927e5aae37b59f1a6aa39e31121c7ca6a1c5dd4ddaaf3d`；原始 tar 为 `627e4b44ba9fcf4da8a7f9f3d1227348815ca021d153c978236758ced206b702`。下载和内部清单核验都应通过；摘要要与可信发布渠道独立核对。发布包不会自动更新，若目标需要当前 TTFT 修复，应从已经审阅的当前仓库单独复制 `grafana/dashboards/litellm-gpu-overview.json`、`docs/grafana-formulas.md`，记录仓库版本和两个文件的 SHA-256；它们不是已发布旧监控包的一部分。
+重新发布后，主包合并 gzip 的 SHA-256 为 `9742da567e1b43ace71d3f89b60705a934eac05e41d3a52032c28dbeb2815044`，原始 tar 为 `6a6a397a70bfb8bdca4230eabf005fdfa1fa1e2090b917d9e5bede7d72a748cb`。下载和内部清单核验都应通过；摘要要与可信发布渠道独立核对。发布包不会自动更新，若目标需要当前 TTFT 修复，应从已经审阅的当前仓库单独复制 `grafana/dashboards/litellm-gpu-overview.json`、`docs/grafana-formulas.md`，记录仓库版本和两个文件的 SHA-256；它们不是已发布旧监控包的一部分。
 
 ```bash
 # REPO 必须由管理员设为已审阅的本仓库在准备机上的绝对路径。

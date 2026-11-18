@@ -61,7 +61,7 @@ cat kylin-v10-gateway-reuse-amd64-20261116.tar.part01 \
 sha256sum -c kylin-v10-gateway-reuse-amd64-20261116.tar.sha256
 ```
 
-合并包应为 **2,110,709,760 字节**，SHA-256 应为 `883acbc802c65b45b121c3c69f27afdb67be01b5eb846de3a981630d140566c6`。将以下文件复制到离线介质：
+合并包应为 **2,101,688,320 字节**，SHA-256 应为 `8b50cf74306f1c455487f257b91587ccffad17df1a6046d339cd1b474a8b48ae`。将以下文件复制到离线介质：
 
 ```text
 kylin-v10-gateway-reuse-amd64-20261116.tar
@@ -152,7 +152,7 @@ gzip -t nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz
 gzip -dc nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz \
   > nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.incomplete
 printf '%s  %s\n' \
-  627e4b44ba9fcf4da8a7f9f3d1227348815ca021d153c978236758ced206b702 \
+  6a6a397a70bfb8bdca4230eabf005fdfa1fa1e2090b917d9e5bede7d72a748cb \
   nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.incomplete | sha256sum -c -
 mv nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.incomplete \
    nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar

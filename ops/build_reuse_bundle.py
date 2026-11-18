@@ -18,7 +18,7 @@ MAIN = 'nginx-litellm-langfuse-amd64-centos7-candidate-20261116-v3.tar.gz'
 MON = 'monitoring-amd64-20261116.tar'
 VALIDATED = 'source-and-docs-20261116-validated.tar.gz'
 PINNED = {
-    MAIN: '18d0c72ba47b918951927e5aae37b59f1a6aa39e31121c7ca6a1c5dd4ddaaf3d',
+    MAIN: '9742da567e1b43ace71d3f89b60705a934eac05e41d3a52032c28dbeb2815044',
     MON: 'e13b42bc325dbbade607af922c5ce0fc142255bee3538e25f7489964ee343396',
     VALIDATED: 'ca92bcd443f237929abe784d743952542d5d4fccdc6ba6ce2721231a48cb234b',
 }
