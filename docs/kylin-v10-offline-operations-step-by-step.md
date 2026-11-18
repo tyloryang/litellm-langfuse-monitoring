@@ -61,7 +61,7 @@ cat kylin-v10-gateway-reuse-amd64-20261116.tar.part01 \
 sha256sum -c kylin-v10-gateway-reuse-amd64-20261116.tar.sha256
 ```
 
-合并包应为 **2,110,976,000 字节**，SHA-256 应为 `00dae398cd70c264e28edc9c16b742dd6d963337ac095e000cd61f10379b0cf4`。将以下文件复制到离线介质：
+合并包应为 **2,110,709,760 字节**，SHA-256 应为 `883acbc802c65b45b121c3c69f27afdb67be01b5eb846de3a981630d140566c6`。将以下文件复制到离线介质：
 
 ```text
 kylin-v10-gateway-reuse-amd64-20261116.tar

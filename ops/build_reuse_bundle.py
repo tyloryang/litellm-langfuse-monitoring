@@ -19,7 +19,7 @@ MON = 'monitoring-amd64-20261116.tar'
 VALIDATED = 'source-and-docs-20261116-validated.tar.gz'
 PINNED = {
     MAIN: '18d0c72ba47b918951927e5aae37b59f1a6aa39e31121c7ca6a1c5dd4ddaaf3d',
-    MON: 'ee5707541d089e19840cd23297089e1d659f2f612eb606de6eb179183537cb12',
+    MON: 'e13b42bc325dbbade607af922c5ce0fc142255bee3538e25f7489964ee343396',
     VALIDATED: 'ca92bcd443f237929abe784d743952542d5d4fccdc6ba6ce2721231a48cb234b',
 }
 

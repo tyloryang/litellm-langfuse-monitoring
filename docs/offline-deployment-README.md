@@ -1,6 +1,6 @@
 # 离线部署 README：给内网运维人员
 
-**当前推荐：** 使用 [LF 修复版完整操作指南](kylin-v10-complete-offline-operations-20261116-lf.md) 和对应 `-lf.tar` 主包。该版本修正主包和监控包内的校验清单换行；Release 提供原始五分卷和校验修复文件，按新手册可生成已验证的修复版。本文下方的旧包名和摘要保留历史含义。
+**当前推荐：** 使用重新发布的五个分卷，合并为脱敏后的 `kylin-v10-gateway-reuse-amd64-20261116.tar`。不要再运行旧的 LF 字节补丁；那个补丁只对应脱敏前的归档。操作步骤见 [麒麟 V10 离线操作指南](kylin-v10-offline-operations-step-by-step.md)。
 
 目标：复用内网已有 Docker、Strata 与 Qwen 模型，离线部署或重部署 Nginx、LiteLLM、Langfuse；最后通过真实请求在 Langfuse 中看到调用链。本文是入口，逐条命令与故障处理在随包 `manual/docs/kylin-v10-offline-operations-step-by-step.md`。
 
@@ -19,7 +19,7 @@ offline-full-chain-update-20261116.tar.gz
 offline-full-chain-update-20261116.tar.gz.sha256
 ```
 
-如果拿到的是五个分卷而非完整 tar，先在联网准备机按逐步指南校验、合并；不能只复制一个分卷。完整 tar 为 2,110,976,000 字节，SHA-256 `00dae398cd70c264e28edc9c16b742dd6d963337ac095e000cd61f10379b0cf4`。校验值也应通过可信渠道核对。内网机进入实际介质目录，执行：
+如果拿到的是五个分卷而非完整 tar，先在联网准备机按逐步指南校验、合并；不能只复制一个分卷。完整 tar 为 2,110,709,760 字节，SHA-256 `883acbc802c65b45b121c3c69f27afdb67be01b5eb846de3a981630d140566c6`。校验值也应通过可信渠道核对。内网机进入实际介质目录，执行：
 
 ```bash
 set -euo pipefail

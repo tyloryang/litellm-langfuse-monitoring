@@ -19,7 +19,7 @@
 | `kylin-v10-gateway-reuse-amd64-20261116.tar.part01` 至 `part05` | 五个原始分卷，先合并成原包 |
 | `BUNDLE-PARTS-SHA256SUMS`、`kylin-v10-gateway-reuse-amd64-20261116.tar.sha256` | 原分卷及合并后原包的校验 |
 | `kylin-v10-gateway-lf-patch-20261116.json`、`apply_offline_bundle_lf.py` 及各自 `.sha256` | 本地生成 LF 修复版的修复数据和脚本 |
-| `kylin-v10-gateway-reuse-amd64-20261116-lf.tar.sha256` | 合并后主包校验 |
+| `kylin-v10-gateway-reuse-amd64-20261116.tar.sha256` | 脱敏后合并包的校验；不要再套用旧的 LF 字节补丁 |
 | `offline-full-chain-update-20261116.tar.gz` 和同名 `.sha256` | 手册、配置示例和真实工具链测试脚本 |
 | `cloud-history-20261116.tar.gz.gpg` 和同名 `.sha256` | 加密的云端历史数据及原始私有配置 |
 | `kylin-v10-complete-offline-operations-20261116-lf.md` 和同名 `.sha256` | 本手册，随介质携带 |
@@ -66,18 +66,15 @@ cat kylin-v10-gateway-reuse-amd64-20261116.tar.part01 \
     kylin-v10-gateway-reuse-amd64-20261116.tar.part05 \
     > kylin-v10-gateway-reuse-amd64-20261116.tar
 sha256sum -c kylin-v10-gateway-reuse-amd64-20261116.tar.sha256
-python3 apply_offline_bundle_lf.py \
-  --source kylin-v10-gateway-reuse-amd64-20261116.tar \
-  --patch kylin-v10-gateway-lf-patch-20261116.json \
-  --output kylin-v10-gateway-reuse-amd64-20261116-lf.tar
-sha256sum -c kylin-v10-gateway-reuse-amd64-20261116-lf.tar.sha256
 ```
 
-合并包应为 `2,110,976,000` 字节，SHA-256 为 `45cbd4df7e66dca3f7298b8dbc75b666772f0c746dd1716d64f7128be61f52d1`。通过受控渠道核对校验值。把以下文件一起拷入内网介质；已合并后无需再带分卷：
+不要对这份重新发布的归档运行 `apply_offline_bundle_lf.py`。该补丁和 `kylin-v10-gateway-reuse-amd64-20261116-lf.tar.sha256` 绑定的是脱敏前的字节；套到新包上会因源校验失败而停止，强行改写则会破坏归档。
+
+合并包应为 `2,110,709,760` 字节，SHA-256 为 `883acbc802c65b45b121c3c69f27afdb67be01b5eb846de3a981630d140566c6`。通过受控渠道核对校验值。把以下文件一起拷入内网介质；已合并后无需再带分卷：
 
 ```text
-kylin-v10-gateway-reuse-amd64-20261116-lf.tar
-kylin-v10-gateway-reuse-amd64-20261116-lf.tar.sha256
+kylin-v10-gateway-reuse-amd64-20261116.tar
+kylin-v10-gateway-reuse-amd64-20261116.tar.sha256
 offline-full-chain-update-20261116.tar.gz
 offline-full-chain-update-20261116.tar.gz.sha256
 cloud-history-20261116.tar.gz.gpg
@@ -160,11 +157,11 @@ unset STRATA_CHECK_URL
 ```bash
 set -euo pipefail
 cd /实际/离线介质目录
-sha256sum -c kylin-v10-gateway-reuse-amd64-20261116-lf.tar.sha256
+sha256sum -c kylin-v10-gateway-reuse-amd64-20261116.tar.sha256
 sha256sum -c offline-full-chain-update-20261116.tar.gz.sha256
 test ! -e /opt/llm-handoff
 test ! -e /opt/llm-offline-full-chain-update-20261116
-tar -xf kylin-v10-gateway-reuse-amd64-20261116-lf.tar -C /opt
+tar -xf kylin-v10-gateway-reuse-amd64-20261116.tar -C /opt
 tar -xzf offline-full-chain-update-20261116.tar.gz -C /opt
 cd /opt/llm-handoff
 sha256sum -c HANDOFF-SHA256SUMS
