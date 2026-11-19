@@ -2,6 +2,8 @@
 
 本项目把 **Nginx、LiteLLM、Langfuse、Prometheus、Grafana 和 Strata** 组合成一条可部署、可追踪、可监控的大模型调用链。它面向已有 GPU 推理服务和内网离线环境：客户端走统一网关，运维可以查看单次请求的 Trace，也可以从看板观察 Token、延迟、GPU 和来源用量。
 
+> 在一台空机器上快速部署整条链路：[空机器图文部署指南](docs/deploy-guide/README.md)
+
 部署操作与排障见 [脱敏版离线手动部署文档](离线手动部署文档.md)，涵盖网关、Strata、Langfuse Trace、Grafana 和离线物料准备；文中地址均为示例，目标环境仍需单独验收。
 
 文档和配置里的地址、路径需要换成自己的环境：
